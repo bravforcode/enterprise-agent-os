@@ -3,7 +3,7 @@
     "list": [
       {
         "builtIn": 1,
-        "datasource": {"type": "grafana", "uid": "-- Grafana --"},
+        "datasource": "-- Grafana --",
         "enable": true,
         "hide": true,
         "iconColor": "rgba(0, 211, 255, 1)",
@@ -12,411 +12,283 @@
       }
     ]
   },
+  "description": "Graxia Tool — Real-time metrics for cost, agents, and cache performance",
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 0,
   "id": null,
   "links": [],
-  "liveNow": false,
   "panels": [
     {
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "title": "Total Cost (USD)",
+      "type": "stat",
+      "datasource": "Prometheus",
+      "gridPos": {"h": 4, "w": 6, "x": 0, "y": 0},
+      "targets": [
+        {
+          "expr": "sum(graxia_cost_usd_total)",
+          "legendFormat": "Total cost"
+        }
+      ],
       "fieldConfig": {
         "defaults": {
-          "color": {"mode": "thresholds"},
-          "mappings": [],
+          "unit": "currencyUSD",
           "thresholds": {
             "mode": "absolute",
             "steps": [
               {"color": "green", "value": null},
-              {"color": "yellow", "value": 100},
-              {"color": "red", "value": 1000}
+              {"color": "yellow", "value": 1},
+              {"color": "red", "value": 10}
             ]
           }
         }
-      },
-      "gridPos": {"h": 6, "w": 6, "x": 0, "y": 0},
-      "id": 1,
-      "options": {
-        "colorMode": "value",
-        "graphMode": "area",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
-        "textMode": "auto"
-      },
-      "pluginVersion": "10.0.0",
-      "targets": [
-        {
-          "expr": "sum(rate(agentos_runs_total[5m]))",
-          "refId": "A"
-        }
-      ],
-      "title": "Runs/sec (5m avg)",
-      "type": "stat"
+      }
     },
     {
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
-      "fieldConfig": {
-        "defaults": {
-          "color": {"mode": "thresholds"},
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {"color": "green", "value": null},
-              {"color": "red", "value": 0.5}
-            ]
-          },
-          "unit": "percentunit"
-        }
-      },
-      "gridPos": {"h": 6, "w": 6, "x": 6, "y": 0},
-      "id": 2,
-      "options": {
-        "colorMode": "background",
-        "graphMode": "none",
-        "justifyMode": "center",
-        "orientation": "horizontal",
-        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
-        "textMode": "auto"
-      },
+      "title": "Total Saved (USD)",
+      "type": "stat",
+      "datasource": "Prometheus",
+      "gridPos": {"h": 4, "w": 6, "x": 6, "y": 0},
       "targets": [
         {
-          "expr": "sum(rate(agentos_runs_total{status=\"success\"}[5m])) / sum(rate(agentos_runs_total[5m]))",
-          "refId": "A"
+          "expr": "sum(graxia_saved_usd_total)",
+          "legendFormat": "Total saved"
         }
       ],
-      "title": "Success Rate (5m)",
-      "type": "stat"
-    },
-    {
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
       "fieldConfig": {
         "defaults": {
-          "color": {"mode": "thresholds"},
+          "unit": "currencyUSD",
           "thresholds": {
             "mode": "absolute",
             "steps": [
               {"color": "green", "value": null}
             ]
-          },
+          }
+        }
+      }
+    },
+    {
+      "title": "Cache Hit Rate",
+      "type": "gauge",
+      "datasource": "Prometheus",
+      "gridPos": {"h": 4, "w": 6, "x": 12, "y": 0},
+      "targets": [
+        {
+          "expr": "sum(rate(graxia_cache_hits_total[5m])) / (sum(rate(graxia_cache_hits_total[5m])) + sum(rate(graxia_cache_misses_total[5m])))",
+          "legendFormat": "Hit rate"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "red", "value": null},
+              {"color": "yellow", "value": 0.5},
+              {"color": "green", "value": 0.8}
+            ]
+          }
+        }
+      }
+    },
+    {
+      "title": "Active Agents",
+      "type": "stat",
+      "datasource": "Prometheus",
+      "gridPos": {"h": 4, "w": 6, "x": 18, "y": 0},
+      "targets": [
+        {
+          "expr": "sum(graxia_active_agents)",
+          "legendFormat": "Active"
+        }
+      ]
+    },
+    {
+      "title": "Requests per Second",
+      "type": "timeseries",
+      "datasource": "Prometheus",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 4},
+      "targets": [
+        {
+          "expr": "sum(rate(graxia_request_total[1m])) by (endpoint)",
+          "legendFormat": "{{endpoint}}"
+        }
+      ]
+    },
+    {
+      "title": "Request Duration (p95)",
+      "type": "timeseries",
+      "datasource": "Prometheus",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 4},
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(graxia_request_duration_seconds_bucket[5m])) by (le, endpoint))",
+          "legendFormat": "p95 {{endpoint}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
           "unit": "s"
         }
-      },
-      "gridPos": {"h": 6, "w": 6, "x": 12, "y": 0},
-      "id": 3,
-      "options": {
-        "colorMode": "value",
-        "graphMode": "area",
-        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
-        "textMode": "auto"
-      },
-      "targets": [
-        {
-          "expr": "histogram_quantile(0.95, sum by (le) (rate(agentos_run_duration_seconds_bucket[5m])))",
-          "refId": "A"
-        }
-      ],
-      "title": "p95 Run Duration",
-      "type": "stat"
+      }
     },
     {
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "title": "Cost by Model",
+      "type": "timeseries",
+      "datasource": "Prometheus",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 12},
+      "targets": [
+        {
+          "expr": "sum(rate(graxia_cost_usd_total[5m])) by (model)",
+          "legendFormat": "{{model}}"
+        }
+      ],
       "fieldConfig": {
         "defaults": {
-          "color": {"mode": "thresholds"},
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {"color": "green", "value": null}
-            ]
-          },
           "unit": "currencyUSD"
         }
-      },
-      "gridPos": {"h": 6, "w": 6, "x": 18, "y": 0},
-      "id": 4,
-      "options": {
-        "colorMode": "value",
-        "graphMode": "area",
-        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
-        "textMode": "auto"
-      },
-      "targets": [
-        {
-          "expr": "sum(increase(agentos_run_cost_usd_total[1h]))",
-          "refId": "A"
-        }
-      ],
-      "title": "Cost (last hour)",
-      "type": "stat"
+      }
     },
     {
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
-      "fieldConfig": {
-        "defaults": {
-          "color": {"mode": "palette-classic"},
-          "custom": {
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "drawStyle": "line",
-            "fillOpacity": 10,
-            "gradientMode": "none",
-            "hideFrom": {"legend": false, "tooltip": false, "viz": false},
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": {"type": "linear"},
-            "showPoints": "never",
-            "spanNulls": false,
-            "stacking": {"group": "A", "mode": "none"},
-            "thresholdsStyle": {"mode": "off"}
-          },
-          "unit": "short"
-        }
-      },
-      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 6},
-      "id": 5,
-      "options": {
-        "legend": {"calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true},
-        "tooltip": {"mode": "single", "sort": "none"}
-      },
+      "title": "Tokens In/Out",
+      "type": "timeseries",
+      "datasource": "Prometheus",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 12},
       "targets": [
         {
-          "expr": "sum by (intent) (rate(agentos_runs_total[5m]))",
-          "legendFormat": "{{intent}}",
-          "refId": "A"
-        }
-      ],
-      "title": "Runs by Intent",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
-      "fieldConfig": {
-        "defaults": {
-          "color": {"mode": "palette-classic"},
-          "custom": {
-            "axisCenteredZero": false,
-            "drawStyle": "line",
-            "fillOpacity": 10,
-            "lineWidth": 1,
-            "pointSize": 5,
-            "showPoints": "never"
-          },
-          "unit": "s"
-        }
-      },
-      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 6},
-      "id": 6,
-      "options": {
-        "legend": {"calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true},
-        "tooltip": {"mode": "single"}
-      },
-      "targets": [
-        {
-          "expr": "histogram_quantile(0.50, sum by (le) (rate(agentos_run_duration_seconds_bucket[5m])))",
-          "legendFormat": "p50",
-          "refId": "A"
+          "expr": "sum(rate(graxia_tokens_in_total[5m]))",
+          "legendFormat": "Tokens In"
         },
         {
-          "expr": "histogram_quantile(0.95, sum by (le) (rate(agentos_run_duration_seconds_bucket[5m])))",
-          "legendFormat": "p95",
-          "refId": "B"
+          "expr": "sum(rate(graxia_tokens_out_total[5m]))",
+          "legendFormat": "Tokens Out"
+        }
+      ]
+    },
+    {
+      "title": "Agent Calls",
+      "type": "timeseries",
+      "datasource": "Prometheus",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 20},
+      "targets": [
+        {
+          "expr": "sum(rate(graxia_agent_calls_total[5m])) by (agent)",
+          "legendFormat": "{{agent}}"
+        }
+      ]
+    },
+    {
+      "title": "Error Rate",
+      "type": "timeseries",
+      "datasource": "Prometheus",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 20},
+      "targets": [
+        {
+          "expr": "sum(rate(graxia_errors_total[5m])) by (type)",
+          "legendFormat": "{{type}}"
+        }
+      ]
+    },
+    {
+      "title": "Cache Hits vs Misses",
+      "type": "timeseries",
+      "datasource": "Prometheus",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 28},
+      "targets": [
+        {
+          "expr": "sum(rate(graxia_cache_hits_total[5m])) by (cache_type)",
+          "legendFormat": "Hits {{cache_type}}"
         },
         {
-          "expr": "histogram_quantile(0.99, sum by (le) (rate(agentos_run_duration_seconds_bucket[5m])))",
-          "legendFormat": "p99",
-          "refId": "C"
+          "expr": "sum(rate(graxia_cache_misses_total[5m])) by (cache_type)",
+          "legendFormat": "Misses {{cache_type}}"
         }
-      ],
-      "title": "Run Duration Percentiles",
-      "type": "timeseries"
+      ]
     },
     {
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
-      "fieldConfig": {
-        "defaults": {
-          "color": {"mode": "palette-classic"},
-          "custom": {
-            "drawStyle": "line",
-            "fillOpacity": 10
-          },
-          "unit": "percentunit"
-        }
-      },
-      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 14},
-      "id": 7,
-      "options": {
-        "legend": {"displayMode": "list", "placement": "bottom", "showLegend": true},
-        "tooltip": {"mode": "single"}
-      },
+      "title": "Savings by Strategy",
+      "type": "piechart",
+      "datasource": "Prometheus",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 28},
       "targets": [
         {
-          "expr": "sum by (cache_type) (rate(agentos_cache_hits_total[5m])) / (sum by (cache_type) (rate(agentos_cache_hits_total[5m])) + sum by (cache_type) (rate(agentos_cache_misses_total[5m])))",
-          "legendFormat": "{{cache_type}}",
-          "refId": "A"
+          "expr": "sum(graxia_saved_usd_total) by (strategy)",
+          "legendFormat": "{{strategy}}"
         }
-      ],
-      "title": "Cache Hit Rate",
-      "type": "timeseries"
+      ]
     },
     {
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "title": "Rate Limited Requests",
+      "type": "timeseries",
+      "datasource": "Prometheus",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 36},
+      "targets": [
+        {
+          "expr": "sum(rate(graxia_rate_limited_total[5m])) by (user_id)",
+          "legendFormat": "{{user_id}}"
+        }
+      ]
+    },
+    {
+      "title": "Audit Events",
+      "type": "timeseries",
+      "datasource": "Prometheus",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 36},
+      "targets": [
+        {
+          "expr": "sum(rate(graxia_audit_events_total[5m])) by (event_type)",
+          "legendFormat": "{{event_type}}"
+        }
+      ]
+    },
+    {
+      "title": "Agent Duration (p99)",
+      "type": "timeseries",
+      "datasource": "Prometheus",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 44},
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.99, sum(rate(graxia_agent_duration_seconds_bucket[5m])) by (le, agent))",
+          "legendFormat": "p99 {{agent}}"
+        }
+      ],
       "fieldConfig": {
         "defaults": {
-          "color": {"mode": "palette-classic"},
-          "custom": {"drawStyle": "line", "fillOpacity": 10},
           "unit": "s"
         }
-      },
-      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 14},
-      "id": 8,
-      "options": {
-        "legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}
-      },
-      "targets": [
-        {
-          "expr": "histogram_quantile(0.95, sum by (le, strategy) (rate(agentos_rag_retrieval_seconds_bucket[5m])))",
-          "legendFormat": "{{strategy}}",
-          "refId": "A"
-        }
-      ],
-      "title": "RAG Retrieval p95 by Strategy",
-      "type": "timeseries"
+      }
     },
     {
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
-      "fieldConfig": {
-        "defaults": {
-          "color": {"mode": "palette-classic"},
-          "custom": {"drawStyle": "bars", "fillOpacity": 80}
-        }
-      },
-      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 22},
-      "id": 9,
-      "options": {
-        "legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}
-      },
+      "title": "Token Reduction Ratio",
+      "type": "stat",
+      "datasource": "Prometheus",
+      "gridPos": {"h": 4, "w": 6, "x": 12, "y": 44},
       "targets": [
         {
-          "expr": "sum by (decision) (rate(agentos_policy_decisions_total[5m]))",
-          "legendFormat": "{{decision}}",
-          "refId": "A"
+          "expr": "avg(graxia_token_reduction_ratio_sum) / avg(graxia_token_reduction_ratio_count)",
+          "legendFormat": "Avg reduction"
         }
       ],
-      "title": "Policy Decisions (5m rate)",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
       "fieldConfig": {
         "defaults": {
-          "color": {"mode": "palette-classic"},
-          "custom": {"drawStyle": "line", "fillOpacity": 10}
-        }
-      },
-      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 22},
-      "id": 10,
-      "options": {
-        "legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}
-      },
-      "targets": [
-        {
-          "expr": "sum by (pattern) (rate(agentos_pattern_runs_total[5m]))",
-          "legendFormat": "{{pattern}}",
-          "refId": "A"
-        }
-      ],
-      "title": "Multi-Agent Pattern Usage",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
-      "fieldConfig": {
-        "defaults": {
-          "color": {"mode": "thresholds"},
-          "unit": "short"
-        }
-      },
-      "gridPos": {"h": 6, "w": 8, "x": 0, "y": 30},
-      "id": 11,
-      "options": {
-        "colorMode": "value",
-        "graphMode": "area",
-        "justifyMode": "auto",
-        "orientation": "horizontal",
-        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}
-      },
-      "targets": [
-        {
-          "expr": "agentos_active_runs",
-          "refId": "A"
-        }
-      ],
-      "title": "Active Runs",
-      "type": "stat"
-    },
-    {
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
-      "fieldConfig": {
-        "defaults": {
-          "color": {"mode": "thresholds"},
-          "unit": "short"
-        }
-      },
-      "gridPos": {"h": 6, "w": 8, "x": 8, "y": 30},
-      "id": 12,
-      "options": {
-        "colorMode": "value",
-        "graphMode": "area"
-      },
-      "targets": [
-        {
-          "expr": "agentos_active_sessions",
-          "refId": "A"
-        }
-      ],
-      "title": "Active Sessions",
-      "type": "stat"
-    },
-    {
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
-      "fieldConfig": {
-        "defaults": {
-          "color": {"mode": "thresholds"},
           "unit": "percentunit"
         }
-      },
-      "gridPos": {"h": 6, "w": 8, "x": 16, "y": 30},
-      "id": 13,
-      "options": {
-        "colorMode": "background",
-        "graphMode": "none"
-      },
-      "targets": [
-        {
-          "expr": "agentos_eval_pass_rate",
-          "refId": "A"
-        }
-      ],
-      "title": "Eval Pass Rate",
-      "type": "stat"
+      }
     }
   ],
-  "refresh": "30s",
+  "refresh": "5s",
   "schemaVersion": 38,
   "style": "dark",
-  "tags": ["agent-os", "ai", "llm"],
+  "tags": ["graxia", "ai", "cost"],
   "templating": {"list": []},
-  "time": {"from": "now-6h", "to": "now"},
+  "time": {"from": "now-1h", "to": "now"},
   "timepicker": {},
   "timezone": "",
-  "title": "Enterprise Agent OS — Operations",
-  "uid": "agentos-ops",
+  "title": "Graxia Tool — Operations",
+  "uid": "graxia-ops",
   "version": 1,
   "weekStart": ""
 }

@@ -1,0 +1,69 @@
+name: Deploy
+
+on:
+  push:
+    tags: ['v*.*.*']
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Deployment environment'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+          - staging
+          - production
+
+jobs:
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    environment: staging
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && contains(github.ref, '-rc')
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v4
+
+      - name: Configure kubeconfig
+        run: |
+          mkdir -p ~/.kube
+          echo "${{ secrets.KUBECONFIG_STAGING }}" | base64 -d > ~/.kube/config
+
+      - name: Deploy to staging
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/v}
+          kubectl set image deployment/graxia-api api=ghcr.io/${{ github.repository }}/api:$VERSION -n graxia-staging
+          kubectl set image deployment/graxia-mcp mcp=ghcr.io/${{ github.repository }}/mcp:$VERSION -n graxia-staging
+          kubectl rollout status deployment/graxia-api -n graxia-staging --timeout=300s
+          kubectl rollout status deployment/graxia-mcp -n graxia-staging --timeout=300s
+
+  deploy-production:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    environment: production
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-rc')
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v4
+
+      - name: Configure kubeconfig
+        run: |
+          mkdir -p ~/.kube
+          echo "${{ secrets.KUBECONFIG_PROD }}" | base64 -d > ~/.kube/config
+
+      - name: Deploy to production
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/v}
+          kubectl set image deployment/graxia-api api=ghcr.io/${{ github.repository }}/api:$VERSION -n graxia
+          kubectl set image deployment/graxia-mcp mcp=ghcr.io/${{ github.repository }}/mcp:$VERSION -n graxia
+          kubectl rollout status deployment/graxia-api -n graxia --timeout=600s
+          kubectl rollout status deployment/graxia-mcp -n graxia --timeout=600s
+
+      - name: Notify
+        if: success()
+        run: |
+          echo "Deployed ${{ github.ref }} to production"
