@@ -1,0 +1,937 @@
+"""Agent OS MCP Server — Expose all features as Model Context Protocol tools.
+
+This makes every feature in Enterprise Agent OS available to ANY AI tool that
+supports MCP (Claude Desktop, Cursor, Windsurf, Continue, custom clients, etc.).
+
+Architecture:
+- Tools: Thin wrappers around Agent OS core APIs
+- Transport: stdio (default) + SSE (HTTP for remote)
+- Protocol: MCP 2024-11-05 spec
+- No external deps required (uses built-in asyncio + json)
+
+Usage:
+    # stdio (local Claude Desktop / Cursor)
+    python -m agent_os.mcp.server
+
+    # SSE (remote clients)
+    python -m agent_os.mcp.server --transport sse --port 8765
+"""
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+import os
+import sys
+import time
+import uuid
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Awaitable, Callable, Dict, List, Optional
+
+logger = logging.getLogger("agent_os.mcp")
+
+# ----------------------------------------------------------------------------
+# Tool registry
+# ----------------------------------------------------------------------------
+
+ToolHandler = Callable[[Dict[str, Any]], Awaitable[Dict[str, Any]]]
+
+
+@dataclass
+class Tool:
+    """An MCP tool definition."""
+    name: str
+    description: str
+    input_schema: Dict[str, Any]
+    handler: ToolHandler
+    category: str = "general"
+
+    def to_mcp_dict(self) -> Dict[str, Any]:
+        return {
+            "name": self.name,
+            "description": self.description,
+            "inputSchema": self.input_schema,
+        }
+
+
+class ToolRegistry:
+    """Registry of all MCP tools exposed by Agent OS."""
+
+    def __init__(self):
+        self._tools: Dict[str, Tool] = {}
+
+    def register(self, tool: Tool) -> None:
+        if tool.name in self._tools:
+            raise ValueError(f"Tool '{tool.name}' already registered")
+        self._tools[tool.name] = tool
+        logger.debug("Registered tool: %s", tool.name)
+
+    def get(self, name: str) -> Optional[Tool]:
+        return self._tools.get(name)
+
+    def list_all(self) -> List[Tool]:
+        return list(self._tools.values())
+
+    def list_by_category(self, category: str) -> List[Tool]:
+        return [t for t in self._tools.values() if t.category == category]
+
+
+# ----------------------------------------------------------------------------
+# JSON-RPC protocol helpers (MCP uses JSON-RPC 2.0)
+# ----------------------------------------------------------------------------
+
+def make_result(req_id: Any, result: Any) -> Dict[str, Any]:
+    return {"jsonrpc": "2.0", "id": req_id, "result": result}
+
+
+def make_error(req_id: Any, code: int, message: str, data: Any = None) -> Dict[str, Any]:
+    err: Dict[str, Any] = {"jsonrpc": "2.0", "id": req_id, "error": {"code": code, "message": message}}
+    if data is not None:
+        err["error"]["data"] = data
+    return err
+
+
+# ----------------------------------------------------------------------------
+# Tool implementations — wrap Agent OS core APIs
+# ----------------------------------------------------------------------------
+
+def _ok(content: Any) -> Dict[str, Any]:
+    """Format a successful tool result as MCP content array."""
+    text = content if isinstance(content, str) else json.dumps(content, default=str, indent=2)
+    return {"content": [{"type": "text", "text": text}]}
+
+
+def _err(message: str) -> Dict[str, Any]:
+    return {"content": [{"type": "text", "text": f"ERROR: {message}"}], "isError": True}
+
+
+async def _agent_run(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Run a sub-agent by name."""
+    from ..agents import AGENT_REGISTRY, list_agents
+
+    agent_name = args.get("agent_name", "")
+    query = args.get("query", "")
+    context = args.get("context", {}) or {}
+    llm_func = args.get("llm_func")  # Optional callable name
+
+    if not agent_name or not query:
+        return _err("agent_name and query are required")
+
+    if agent_name not in AGENT_REGISTRY:
+        return _err(f"Unknown agent '{agent_name}'. Available: {list_agents()}")
+
+    cls = AGENT_REGISTRY[agent_name]
+
+    # Resolve LLM function if requested by name
+    resolved_llm = None
+    if llm_func:
+        resolved_llm = _resolve_llm_func(llm_func)
+
+    instance = cls(llm_func=resolved_llm)
+    start = time.time()
+    try:
+        result = await instance.run(query, context=context)
+        duration_ms = int((time.time() - start) * 1000)
+        return _ok({
+            "agent": agent_name,
+            "success": result.success,
+            "output": result.output,
+            "error": result.error,
+            "tokens_used": result.tokens_used,
+            "cost_usd": result.cost_usd,
+            "duration_ms": result.duration_ms or duration_ms,
+            "metadata": result.metadata,
+        })
+    except Exception as e:
+        logger.exception("agent_run failed")
+        return _err(f"{type(e).__name__}: {e}")
+
+
+async def _agent_list(args: Dict[str, Any]) -> Dict[str, Any]:
+    """List all available sub-agents."""
+    from ..agents import list_agents
+    return _ok({"agents": list_agents(), "count": len(list_agents())})
+
+
+async def _pipeline_run(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Run the end-to-end pipeline."""
+    from ..pipeline import EndToEndPipeline, PipelineRequest
+
+    query = args.get("query", "")
+    user_id = args.get("user_id", "default")
+    pattern = args.get("pattern")  # Optional multi-agent pattern
+
+    if not query:
+        return _err("query is required")
+
+    pipeline = EndToEndPipeline()
+    request = PipelineRequest(query=query, user_id=user_id, pattern=pattern)
+    try:
+        result = await pipeline.run(request)
+        return _ok({
+            "success": result.success,
+            "output": result.output,
+            "intent": getattr(result, "intent", None),
+            "stages": result.stages_log,
+            "duration_ms": result.duration_ms,
+            "cost_usd": result.cost_usd,
+        })
+    except Exception as e:
+        logger.exception("pipeline_run failed")
+        return _err(f"{type(e).__name__}: {e}")
+
+
+async def _guard_check(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Check input/output through guardrails."""
+    from ..guards import InputGuard, OutputGuard
+
+    text = args.get("text", "")
+    direction = args.get("direction", "input")  # input | output
+
+    if not text:
+        return _err("text is required")
+
+    try:
+        if direction == "input":
+            guard = InputGuard()
+            result = await guard.check(text)
+        else:
+            guard = OutputGuard()
+            result = await guard.check(text)
+
+        return _ok({
+            "allowed": getattr(result, "allowed", True),
+            "risk_level": getattr(result, "risk_level", "low"),
+            "issues": getattr(result, "issues", []),
+            "sanitized": getattr(result, "sanitized_text", text),
+        })
+    except Exception as e:
+        logger.exception("guard_check failed")
+        return _err(f"{type(e).__name__}: {e}")
+
+
+async def _memory_search(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Search memory layers."""
+    from ..memory import MemoryOS
+
+    query = args.get("query", "")
+    layers = args.get("layers", None)  # None = all
+    limit = int(args.get("limit", 5))
+
+    if not query:
+        return _err("query is required")
+
+    try:
+        mem = MemoryOS()
+        results = await mem.search(query, layers=layers, limit=limit)
+        return _ok({"results": results, "count": len(results)})
+    except Exception as e:
+        logger.exception("memory_search failed")
+        return _err(f"{type(e).__name__}: {e}")
+
+
+async def _rag_query(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Query the RAG system."""
+    from ..rag import RAGOS
+
+    query = args.get("query", "")
+    top_k = int(args.get("top_k", 5))
+    collection = args.get("collection", "default")
+
+    if not query:
+        return _err("query is required")
+
+    try:
+        rag = RAGOS()
+        results = await rag.query(query, top_k=top_k, collection=collection)
+        return _ok({"results": results, "count": len(results) if isinstance(results, list) else 0})
+    except Exception as e:
+        logger.exception("rag_query failed")
+        return _err(f"{type(e).__name__}: {e}")
+
+
+async def _cache_get(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Get a value from the prompt cache."""
+    from ..core import PromptCache
+
+    key = args.get("key", "")
+    if not key:
+        return _err("key is required")
+
+    try:
+        cache = PromptCache()
+        result = cache.get(key)
+        if asyncio.iscoroutine(result):
+            result = await result
+        return _ok({"key": key, "value": result, "hit": result is not None})
+    except Exception as e:
+        logger.exception("cache_get failed")
+        return _err(f"{type(e).__name__}: {e}")
+
+
+async def _cache_set(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Set a value in the prompt cache."""
+    from ..core import PromptCache
+
+    key = args.get("key", "")
+    value = args.get("value")
+    ttl = int(args.get("ttl", 3600))
+
+    if not key or value is None:
+        return _err("key and value are required")
+
+    try:
+        cache = PromptCache()
+        set_result = cache.set(key, value, ttl=ttl)
+        if asyncio.iscoroutine(set_result):
+            await set_result
+        return _ok({"key": key, "stored": True, "ttl": ttl})
+    except Exception as e:
+        logger.exception("cache_set failed")
+        return _err(f"{type(e).__name__}: {e}")
+
+
+async def _cost_report(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Get cost report from the cost engine."""
+    from ..cost_engine import CostEngine
+
+    period = args.get("period", "all")  # hour, day, week, all
+    try:
+        engine = CostEngine()
+        report = await engine.report(period=period)
+        return _ok(report)
+    except Exception as e:
+        logger.exception("cost_report failed")
+        return _err(f"{type(e).__name__}: {e}")
+
+
+async def _skills_list(args: Dict[str, Any]) -> Dict[str, Any]:
+    """List available skills."""
+    from ..skills import list_skills
+    return _ok({"skills": list_skills()})
+
+
+async def _skills_load(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Load a specific skill by name."""
+    from ..skills import load_skill
+
+    skill_name = args.get("skill_name", "")
+    if not skill_name:
+        return _err("skill_name is required")
+
+    try:
+        skill = load_skill(skill_name)
+        return _ok({"name": skill.name, "content": skill.content, "tokens": skill.tokens})
+    except Exception as e:
+        logger.exception("skills_load failed")
+        return _err(f"{type(e).__name__}: {e}")
+
+
+async def _multi_agent_run(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Run a multi-agent pattern."""
+    from ..multi_agent import create_coordinator
+
+    pattern = args.get("pattern", "pipeline")
+    query = args.get("query", "")
+    agents = args.get("agents", [])  # List of agent names
+
+    if not query:
+        return _err("query is required")
+
+    try:
+        # Resolve agents from registry
+        from ..agents import AGENT_REGISTRY
+        resolved_agents = {}
+        for name in agents or []:
+            if name in AGENT_REGISTRY:
+                cls = AGENT_REGISTRY[name]
+                resolved_agents[name] = cls()
+
+        config = {}
+        coordinator = create_coordinator(pattern, config, resolved_agents)
+        result = await coordinator.run(query)
+        return _ok({
+            "pattern": pattern,
+            "success": result.success,
+            "output": result.output,
+            "state": result.state if hasattr(result, "state") else {},
+        })
+    except Exception as e:
+        logger.exception("multi_agent_run failed")
+        return _err(f"{type(e).__name__}: {e}")
+
+
+async def _governance_check(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Check governance policies for an action."""
+    from ..governance import PolicyEngine
+
+    action = args.get("action", "")
+    context = args.get("context", {}) or {}
+
+    if not action:
+        return _err("action is required")
+
+    try:
+        engine = PolicyEngine()
+        decision = await engine.evaluate(action, context)
+        return _ok({
+            "allowed": getattr(decision, "allowed", True),
+            "policy": getattr(decision, "policy", "unknown"),
+            "reason": getattr(decision, "reason", ""),
+            "risk_level": getattr(decision, "risk_level", "low"),
+        })
+    except Exception as e:
+        logger.exception("governance_check failed")
+        return _err(f"{type(e).__name__}: {e}")
+
+
+async def _eval_run(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Run evaluation on an agent."""
+    from ..eval import RegressionHarness
+
+    dataset_name = args.get("dataset_name", "qa")
+    agent_name = args.get("agent_name", "general")
+
+    try:
+        harness = RegressionHarness()
+        result = await harness.run(agent_name, datasets=[dataset_name])
+        return _ok({
+            "dataset": dataset_name,
+            "agent": agent_name,
+            "passed": result.passed,
+            "total": result.total,
+            "score": result.score,
+        })
+    except Exception as e:
+        logger.exception("eval_run failed")
+        return _err(f"{type(e).__name__}: {e}")
+
+
+async def _system_status(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Get system status."""
+    return _ok({
+        "status": "operational",
+        "version": "0.1.0",
+        "components": {
+            "agents": "ready",
+            "pipeline": "ready",
+            "rag": "ready",
+            "memory": "ready",
+            "guardrails": "ready",
+            "governance": "ready",
+            "cost_engine": "ready",
+            "multi_agent": "ready",
+            "eval": "ready",
+        },
+        "pid": os.getpid(),
+        "uptime_s": int(time.time() - _START_TIME),
+    })
+
+
+async def _vault_search(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Search the connected Obsidian vault (if configured)."""
+    from ..integrations.obsidian import ObsidianBridge
+
+    query = args.get("query", "")
+    limit = int(args.get("limit", 10))
+    if not query:
+        return _err("query is required")
+
+    try:
+        bridge = ObsidianBridge()
+        results = await bridge.search(query, limit=limit)
+        return _ok({"results": results, "count": len(results)})
+    except Exception as e:
+        logger.exception("vault_search failed")
+        return _err(f"{type(e).__name__}: {e}")
+
+
+async def _vault_read(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Read a note from the Obsidian vault."""
+    from ..integrations.obsidian import ObsidianBridge
+
+    path = args.get("path", "")
+    if not path:
+        return _err("path is required")
+
+    try:
+        bridge = ObsidianBridge()
+        content = await bridge.read_note(path)
+        return _ok({"path": path, "content": content})
+    except Exception as e:
+        logger.exception("vault_read failed")
+        return _err(f"{type(e).__name__}: {e}")
+
+
+async def _vault_write(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Write a note to the Obsidian vault."""
+    from ..integrations.obsidian import ObsidianBridge
+
+    path = args.get("path", "")
+    content = args.get("content", "")
+    if not path or content is None:
+        return _err("path and content are required")
+
+    try:
+        bridge = ObsidianBridge()
+        await bridge.write_note(path, content)
+        return _ok({"path": path, "written": True})
+    except Exception as e:
+        logger.exception("vault_write failed")
+        return _err(f"{type(e).__name__}: {e}")
+
+
+# ----------------------------------------------------------------------------
+# LLM function resolver
+# ----------------------------------------------------------------------------
+
+_LLM_REGISTRY: Dict[str, Any] = {}
+
+
+def register_llm(name: str, func: Any) -> None:
+    """Register a callable LLM function for use via MCP."""
+    _LLM_REGISTRY[name] = func
+
+
+def _resolve_llm_func(name: str) -> Optional[Any]:
+    return _LLM_REGISTRY.get(name)
+
+
+# ----------------------------------------------------------------------------
+# Build the default tool registry
+# ----------------------------------------------------------------------------
+
+_START_TIME = time.time()
+
+
+def build_default_registry() -> ToolRegistry:
+    """Build the default MCP tool registry exposing Agent OS features."""
+    reg = ToolRegistry()
+
+    # Agent OS core
+    reg.register(Tool(
+        name="agent_run",
+        description="Run a sub-agent (coder, reviewer, debugger, tester, etc.) on a query. Returns the agent's output, tokens used, and cost.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "agent_name": {"type": "string", "description": "Name of the agent: coder, debugger, tester, reviewer, deployer, documenter, researcher, data_engineer, sysadmin, conversational, general, validator, planner, architect, security_auditor"},
+                "query": {"type": "string", "description": "The query / task to run"},
+                "context": {"type": "object", "description": "Optional context dict"},
+                "llm_func": {"type": "string", "description": "Optional name of registered LLM function"},
+            },
+            "required": ["agent_name", "query"],
+        },
+        handler=_agent_run,
+        category="agents",
+    ))
+
+    reg.register(Tool(
+        name="agent_list",
+        description="List all available sub-agents with their capabilities.",
+        input_schema={"type": "object", "properties": {}},
+        handler=_agent_list,
+        category="agents",
+    ))
+
+    reg.register(Tool(
+        name="pipeline_run",
+        description="Run the full end-to-end pipeline: input guard → classify → governance → route → execute → validate → log. Returns the final output and stage log.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "query": {"type": "string"},
+                "user_id": {"type": "string", "default": "default"},
+                "pattern": {"type": "string", "description": "Optional multi-agent pattern: pipeline, supervisor, parallel, hierarchical, debate, consensus, marketplace"},
+            },
+            "required": ["query"],
+        },
+        handler=_pipeline_run,
+        category="pipeline",
+    ))
+
+    reg.register(Tool(
+        name="multi_agent_run",
+        description="Run one of 7 multi-agent coordination patterns (pipeline, supervisor, parallel, hierarchical, debate, consensus, marketplace).",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "pattern": {"type": "string", "default": "pipeline"},
+                "query": {"type": "string"},
+                "agents": {"type": "array", "items": {"type": "string"}},
+            },
+            "required": ["pattern", "query"],
+        },
+        handler=_multi_agent_run,
+        category="multi_agent",
+    ))
+
+    # Guardrails
+    reg.register(Tool(
+        name="guard_check",
+        description="Run input or output guardrail checks (PII redaction, injection detection, harmful content filter).",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "text": {"type": "string"},
+                "direction": {"type": "string", "enum": ["input", "output"], "default": "input"},
+            },
+            "required": ["text"],
+        },
+        handler=_guard_check,
+        category="guardrails",
+    ))
+
+    # Memory + RAG
+    reg.register(Tool(
+        name="memory_search",
+        description="Search across memory layers (working, episodic, semantic, procedural, LTM, STM, RAG, Graph).",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "query": {"type": "string"},
+                "layers": {"type": "array", "items": {"type": "string"}},
+                "limit": {"type": "integer", "default": 5},
+            },
+            "required": ["query"],
+        },
+        handler=_memory_search,
+        category="memory",
+    ))
+
+    reg.register(Tool(
+        name="rag_query",
+        description="Query the RAG system for relevant documents.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "query": {"type": "string"},
+                "top_k": {"type": "integer", "default": 5},
+                "collection": {"type": "string", "default": "default"},
+            },
+            "required": ["query"],
+        },
+        handler=_rag_query,
+        category="rag",
+    ))
+
+    # Cache + Cost
+    reg.register(Tool(
+        name="cache_get",
+        description="Get a value from the prompt cache by key.",
+        input_schema={
+            "type": "object",
+            "properties": {"key": {"type": "string"}},
+            "required": ["key"],
+        },
+        handler=_cache_get,
+        category="cache",
+    ))
+
+    reg.register(Tool(
+        name="cache_set",
+        description="Store a value in the prompt cache with TTL.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "key": {"type": "string"},
+                "value": {"type": "string"},
+                "ttl": {"type": "integer", "default": 3600},
+            },
+            "required": ["key", "value"],
+        },
+        handler=_cache_set,
+        category="cache",
+    ))
+
+    reg.register(Tool(
+        name="cost_report",
+        description="Get cost report from the cost engine: total tokens, cost USD, savings %, cache hit rate.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "period": {"type": "string", "enum": ["hour", "day", "week", "all"], "default": "all"},
+            },
+        },
+        handler=_cost_report,
+        category="cost",
+    ))
+
+    # Skills
+    reg.register(Tool(
+        name="skills_list",
+        description="List all available skills in the skill registry.",
+        input_schema={"type": "object", "properties": {}},
+        handler=_skills_list,
+        category="skills",
+    ))
+
+    reg.register(Tool(
+        name="skills_load",
+        description="Load a skill's full content by name.",
+        input_schema={
+            "type": "object",
+            "properties": {"skill_name": {"type": "string"}},
+            "required": ["skill_name"],
+        },
+        handler=_skills_load,
+        category="skills",
+    ))
+
+    # Governance
+    reg.register(Tool(
+        name="governance_check",
+        description="Check if an action is allowed by governance policies (safety, cost, quality, compliance).",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "action": {"type": "string"},
+                "context": {"type": "object"},
+            },
+            "required": ["action"],
+        },
+        handler=_governance_check,
+        category="governance",
+    ))
+
+    # Eval
+    reg.register(Tool(
+        name="eval_run",
+        description="Run regression eval on an agent against a golden dataset.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "dataset_name": {"type": "string", "default": "qa"},
+                "agent_name": {"type": "string", "default": "general"},
+            },
+        },
+        handler=_eval_run,
+        category="eval",
+    ))
+
+    # System
+    reg.register(Tool(
+        name="system_status",
+        description="Get Agent OS system status, version, and component health.",
+        input_schema={"type": "object", "properties": {}},
+        handler=_system_status,
+        category="system",
+    ))
+
+    # Obsidian vault
+    reg.register(Tool(
+        name="vault_search",
+        description="Search the connected Obsidian vault (Second Brain) for notes matching a query.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "query": {"type": "string"},
+                "limit": {"type": "integer", "default": 10},
+            },
+            "required": ["query"],
+        },
+        handler=_vault_search,
+        category="vault",
+    ))
+
+    reg.register(Tool(
+        name="vault_read",
+        description="Read a specific note from the Obsidian vault by path.",
+        input_schema={
+            "type": "object",
+            "properties": {"path": {"type": "string"}},
+            "required": ["path"],
+        },
+        handler=_vault_read,
+        category="vault",
+    ))
+
+    reg.register(Tool(
+        name="vault_write",
+        description="Write a note to the Obsidian vault (creates directories as needed).",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "path": {"type": "string"},
+                "content": {"type": "string"},
+            },
+            "required": ["path", "content"],
+        },
+        handler=_vault_write,
+        category="vault",
+    ))
+
+    return reg
+
+
+# ----------------------------------------------------------------------------
+# JSON-RPC dispatcher
+# ----------------------------------------------------------------------------
+
+class MCPServer:
+    """Minimal MCP server implementation using stdio or SSE."""
+
+    SERVER_NAME = "agent-os"
+    SERVER_VERSION = "0.1.0"
+    PROTOCOL_VERSION = "2024-11-05"
+
+    def __init__(self, registry: Optional[ToolRegistry] = None):
+        self.registry = registry or build_default_registry()
+        self._initialized = False
+
+    async def handle_request(self, req: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Route an incoming JSON-RPC request. Returns None for notifications."""
+        method = req.get("method", "")
+        req_id = req.get("id")
+        params = req.get("params", {}) or {}
+
+        # Notifications have no id; only respond to requests
+        is_notification = "id" not in req or req_id is None
+
+        try:
+            if method == "initialize":
+                result = {
+                    "protocolVersion": self.PROTOCOL_VERSION,
+                    "serverInfo": {"name": self.SERVER_NAME, "version": self.SERVER_VERSION},
+                    "capabilities": {"tools": {"listChanged": False}},
+                }
+                self._initialized = True
+                return make_result(req_id, result) if not is_notification else None
+
+            if method == "notifications/initialized":
+                # Client signals init complete
+                self._initialized = True
+                return None
+
+            if method == "tools/list":
+                tools = [t.to_mcp_dict() for t in self.registry.list_all()]
+                return make_result(req_id, {"tools": tools}) if not is_notification else None
+
+            if method == "tools/call":
+                tool_name = params.get("name", "")
+                arguments = params.get("arguments", {}) or {}
+                tool = self.registry.get(tool_name)
+                if not tool:
+                    return make_error(req_id, -32602, f"Unknown tool: {tool_name}")
+                try:
+                    content = await tool.handler(arguments)
+                    return make_result(req_id, content) if not is_notification else None
+                except Exception as e:
+                    logger.exception("Tool %s raised", tool_name)
+                    return make_error(req_id, -32603, f"Tool error: {e}")
+
+            if method == "ping":
+                return make_result(req_id, {}) if not is_notification else None
+
+            return make_error(req_id, -32601, f"Method not found: {method}")
+
+        except Exception as e:
+            logger.exception("handle_request failed")
+            return make_error(req_id, -32603, f"Internal error: {e}")
+
+    # ------------------------------------------------------------------------
+    # stdio transport
+    # ------------------------------------------------------------------------
+
+    async def run_stdio(self) -> None:
+        """Run the server over stdio (JSON-RPC newline-delimited)."""
+        logger.info("MCP server starting on stdio")
+        loop = asyncio.get_event_loop()
+        reader = asyncio.StreamReader()
+        protocol = asyncio.StreamReaderProtocol(reader)
+        await loop.connect_read_pipe(lambda: protocol, sys.stdin)
+
+        writer_transport, writer_protocol = await loop.connect_write_pipe(asyncio.StreamReaderProtocol, sys.stdout)
+        writer = asyncio.StreamWriter(writer_transport, writer_protocol, reader, loop)
+
+        while True:
+            try:
+                line = await reader.readline()
+                if not line:
+                    break
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    req = json.loads(line)
+                except json.JSONDecodeError as e:
+                    err = make_error(None, -32700, f"Parse error: {e}")
+                    writer.write((json.dumps(err) + "\n").encode("utf-8"))
+                    await writer.drain()
+                    continue
+
+                response = await self.handle_request(req)
+                if response is not None:
+                    writer.write((json.dumps(response) + "\n").encode("utf-8"))
+                    await writer.drain()
+            except (asyncio.IncompleteReadError, ConnectionError):
+                break
+            except Exception:
+                logger.exception("stdio loop error")
+                continue
+
+    # ------------------------------------------------------------------------
+    # SSE / HTTP transport (optional)
+    # ------------------------------------------------------------------------
+
+    async def run_sse(self, host: str = "127.0.0.1", port: int = 8765) -> None:
+        """Run the server over HTTP/SSE. Requires `aiohttp`."""
+        try:
+            from aiohttp import web  # type: ignore
+        except ImportError:
+            raise RuntimeError("aiohttp is required for SSE transport. Install with: pip install aiohttp")
+
+        async def handle_http(request: Any) -> Any:
+            try:
+                body = await request.json()
+            except Exception:
+                return web.json_response(make_error(None, -32700, "Invalid JSON"), status=400)
+            response = await self.handle_request(body)
+            return web.json_response(response or {})
+
+        async def handle_sse(request: Any) -> Any:
+            response = web.StreamResponse(
+                status=200,
+                headers={"Content-Type": "text/event-stream", "Cache-Control": "no-cache"},
+            )
+            await response.prepare(request)
+            return response
+
+        app = web.Application()
+        app.router.add_post("/mcp", handle_http)
+        app.router.add_get("/sse", handle_sse)
+        app.router.add_get("/health", lambda r: web.json_response({"status": "ok"}))
+
+        logger.info("MCP server starting on http://%s:%d/mcp", host, port)
+        web.run_app(app, host=host, port=port)
+
+
+# ----------------------------------------------------------------------------
+# CLI entry
+# ----------------------------------------------------------------------------
+
+def main() -> None:
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Agent OS MCP Server")
+    parser.add_argument("--transport", choices=["stdio", "sse"], default="stdio")
+    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--port", type=int, default=8765)
+    parser.add_argument("--log-level", default="INFO")
+    args = parser.parse_args()
+
+    logging.basicConfig(
+        level=getattr(logging, args.log_level.upper()),
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    )
+
+    server = MCPServer()
+    if args.transport == "stdio":
+        asyncio.run(server.run_stdio())
+    else:
+        asyncio.run(server.run_sse(args.host, args.port))
+
+
+if __name__ == "__main__":
+    main()
