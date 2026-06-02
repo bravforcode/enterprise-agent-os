@@ -1,14 +1,17 @@
 apiVersion: v2
-name: agent-os
-description: Enterprise AI Agent Operating System
+name: graxia-tool
+description: Graxia Tool — Universal AI Agent OS with MCP server, cost engine, Obsidian + Graxia integration
 type: application
-version: 0.1.0
-appVersion: "0.1.0"
+version: 0.2.0
+appVersion: "0.2.0"
 keywords:
   - ai
   - agents
   - llm
+  - mcp
   - enterprise
+  - graxia
+  - cost-engine
 maintainers:
-  - name: Agent OS Team
-    email: ops@agent-os.example.com
+  - name: Graxia Tool Team
+    email: ops@graxia-tool.example.com

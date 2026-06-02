@@ -1,0 +1,85 @@
+---
+# Kubernetes deployment for Graxia Tool MCP SSE server
+# For remote MCP clients (Claude Desktop, Cursor, custom agents)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: graxia-tool-mcp
+  labels:
+    app: graxia-tool
+    component: mcp
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: graxia-tool
+      component: mcp
+  template:
+    metadata:
+      labels:
+        app: graxia-tool
+        component: mcp
+    spec:
+      containers:
+      - name: mcp
+        image: graxia-tool/mcp:latest
+        imagePullPolicy: IfNotPresent
+        command: ["python", "-m", "graxia_tool.mcp", "--transport", "sse", "--host", "0.0.0.0", "--port", "8765"]
+        ports:
+        - containerPort: 8765
+          name: http
+          protocol: TCP
+        env:
+        - name: PYTHONPATH
+          value: "/app/src"
+        - name: AGENT_OS_VAULT_PATH
+          value: "/vault/Second Brain"
+        - name: GRAXIA_BASE_URL
+          value: "http://graxia-os-backend:8000"
+        - name: GRAXIA_POSTGRES_URL
+          valueFrom:
+            secretKeyRef:
+              name: graxia-tool-secrets
+              key: postgres-url
+        - name: GRAXIA_QDRANT_URL
+          valueFrom:
+            secretKeyRef:
+              name: graxia-tool-secrets
+              key: qdrant-url
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8765
+          initialDelaySeconds: 10
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8765
+          initialDelaySeconds: 5
+          periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: graxia-tool-mcp
+  labels:
+    app: graxia-tool
+    component: mcp
+spec:
+  type: ClusterIP
+  ports:
+  - port: 8765
+    targetPort: 8765
+    protocol: TCP
+    name: http
+  selector:
+    app: graxia-tool
+    component: mcp

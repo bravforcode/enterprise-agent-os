@@ -3,20 +3,20 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: agent-os-api
+  name: graxia-tool-api
   labels:
-    app: agent-os
+    app: graxia-tool
     component: api
 spec:
   replicas: 3
   selector:
     matchLabels:
-      app: agent-os
+      app: graxia-tool
       component: api
   template:
     metadata:
       labels:
-        app: agent-os
+        app: graxia-tool
         component: api
       annotations:
         prometheus.io/scrape: "true"
@@ -25,7 +25,7 @@ spec:
     spec:
       containers:
       - name: api
-        image: agent-os/api:latest
+        image: graxia-tool/api:latest
         imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 8000
@@ -35,27 +35,27 @@ spec:
         - name: AOS_DATABASE_URL
           valueFrom:
             secretKeyRef:
-              name: agent-os-secrets
+              name: graxia-tool-secrets
               key: database-url
         - name: AOS_REDIS_URL
           valueFrom:
             secretKeyRef:
-              name: agent-os-secrets
+              name: graxia-tool-secrets
               key: redis-url
         - name: AOS_QDRANT_URL
           valueFrom:
             secretKeyRef:
-              name: agent-os-secrets
+              name: graxia-tool-secrets
               key: qdrant-url
         - name: AOS_JWT_SECRET
           valueFrom:
             secretKeyRef:
-              name: agent-os-secrets
+              name: graxia-tool-secrets
               key: jwt-secret
         - name: AOS_LLM_API_KEY
           valueFrom:
             secretKeyRef:
-              name: agent-os-secrets
+              name: graxia-tool-secrets
               key: llm-api-key
         - name: AOS_LOG_LEVEL
           value: "INFO"
@@ -106,9 +106,9 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: agent-os-api
+  name: graxia-tool-api
   labels:
-    app: agent-os
+    app: graxia-tool
     component: api
 spec:
   type: ClusterIP
@@ -118,18 +118,18 @@ spec:
     protocol: TCP
     name: http
   selector:
-    app: agent-os
+    app: graxia-tool
     component: api
 ---
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
-  name: agent-os-api
+  name: graxia-tool-api
 spec:
   scaleTargetRef:
     apiVersion: apps/v1
     kind: Deployment
-    name: agent-os-api
+    name: graxia-tool-api
   minReplicas: 3
   maxReplicas: 20
   metrics:
@@ -154,22 +154,22 @@ spec:
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
-  name: agent-os-api
+  name: graxia-tool-api
 spec:
   minAvailable: 1
   selector:
     matchLabels:
-      app: agent-os
+      app: graxia-tool
       component: api
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: agent-os-api
+  name: graxia-tool-api
 spec:
   podSelector:
     matchLabels:
-      app: agent-os
+      app: graxia-tool
       component: api
   policyTypes:
   - Ingress

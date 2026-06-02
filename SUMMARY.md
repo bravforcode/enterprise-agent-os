@@ -1,9 +1,10 @@
-# Enterprise AI Agent Operating System — Master Plan Progress
+# Graxia Tool — Universal AI Agent OS
 
-## Status: Phases 0-20 Complete (FULL INTEGRATION + UNIVERSAL)
+## Status: Phases 0-20 Complete (FULL INTEGRATION + UNIVERSAL + RENAMED)
 
 ### Project: `C:/Users/menum/enterprise-agent-os/`
-### Tests: 248 passing, 1 skipped (Redis not available locally)
+### Package: `graxia_tool` (renamed from agent_os)
+### Tests: 267 passing, 1 skipped
 
 ---
 
@@ -295,8 +296,9 @@ test_phase6_7.py: 31 tests (Governance, Eval, Metrics, Guards)
 test_phase8.py: 33 tests (7 patterns + shared state + factory + builder + integration)
 test_phase9_14.py: 30 tests (CostOpt, Datasets, Regression, Pipeline, Metrics)
 test_phase16_20.py: 48 tests (MCP, Vault, CostEngine, Adapters, Graxia, EndToEnd)
+test_storage.py: 19 tests (InMemory, Postgres, Qdrant, InMemoryMemory)
 
-Total: 248 passing, 1 skipped
+Total: 267 passing, 1 skipped
 ```
 
 ---
@@ -304,6 +306,7 @@ Total: 248 passing, 1 skipped
 ## Git History
 
 ```
+feat: rename agent_os->graxia_tool, live MCP test, Graxia integration, persistent storage (Postgres+Qdrant), Claude Desktop config
 feat(phase16-20): MCP server, vault bridge, cost engine, universal adapters, Graxia integration
 feat(phase9-14): production deploy, prometheus, eval datasets, end-to-end pipeline, cost optimization, web UI
 feat(phase8): multi-agent patterns (pipeline, supervisor, parallel, hierarchical, debate, consensus, marketplace)
@@ -320,21 +323,47 @@ feat(enterprise-os): Phase 0 foundation
 
 ## What's Next
 
-🎉 **ALL 20 PHASES COMPLETE — UNIVERSAL AI AGENT OS!**
+🎉 **ALL 20 PHASES COMPLETE — UNIVERSAL GRAXIA TOOL!**
 
-The Enterprise Agent OS is now a **universal AI-native skill layer** that:
-- ✅ 13 modules (api, core, memory, rag, skills, tools, agents, governance, observability, eval, multi_agent, pipeline, optimization, **mcp**, **cost_engine**, **adapters**, **integrations**)
-- ✅ 248 tests, 1 skipped
-- ✅ 14,000+ lines of code
+The Graxia Tool is now a **universal AI-native skill layer** that:
+- ✅ 14 modules (api, core, memory, rag, skills, tools, agents, governance, observability, eval, multi_agent, pipeline, optimization, **mcp**, **cost_engine**, **adapters**, **integrations**, **storage**)
+- ✅ 267 tests, 1 skipped
+- ✅ 15,000+ lines of code
 - ✅ **MCP server** — any AI tool (Claude, GPT, Gemini, local LLM) can call all features
 - ✅ **Cost engine** — 80-95% savings via cache + dedup + compress + downgrade
 - ✅ **Universal adapters** — Anthropic/OpenAI/Gemini/Generic function calling
 - ✅ **Obsidian vault bridge** — auto-detects Second Brain, smart skill loader
 - ✅ **Graxia OS bridge** — peer service, shares cost/auth
-- ✅ **Vault agent mapping** — 12 routing agents → 18 Agent OS tools
+- ✅ **Vault agent mapping** — 12 routing agents → 18 tools
+- ✅ **Persistent storage** — Postgres cache + Qdrant vector memory
+- ✅ **K8s deployment** — API + MCP SSE + PostgreSQL + Redis + Qdrant
+- ✅ **Claude Desktop config** — ready to use
+- ✅ **Live integration test** — Graxia mock server validated
 - ✅ Full k8s + Terraform production deployment
 - ✅ Prometheus + Grafana monitoring
-- ✅ Web dashboard (HTMX)
+
+### Quick start:
+```bash
+# Claude Desktop config (copy to ~/Library/Application Support/Claude/claude_desktop_config.json)
+{
+  "mcpServers": {
+    "graxia_tool": {
+      "command": "python",
+      "args": ["-m", "graxia_tool.mcp", "--transport", "stdio"],
+      "env": {
+        "PYTHONPATH": "C:\\Users\\menum\\enterprise-agent-os\\src",
+        "AGENT_OS_VAULT_PATH": "C:\\Users\\menum\\Documents\\ObsidianVault\\Second Brain"
+      }
+    }
+  }
+}
+
+# K8s deploy
+cd k8s && kubectl apply -f api-deployment.yaml -f mcp-deployment.yaml -f databases.yaml -f ingress.yaml
+
+# Run tests
+cd enterprise-agent-os && pytest
+```
 
 ### Integrations (all live):
 - **Claude Desktop / Cursor / Windsurf / Continue** — via MCP stdio
@@ -342,10 +371,5 @@ The Enterprise Agent OS is now a **universal AI-native skill layer** that:
 - **Gemini** — via function_declarations
 - **Obsidian vault** — RAG + skill loader + read/write
 - **Graxia OS** — peer service bridge
-
-### Future enhancements (out of scope):
-- Vector DB migrations (Qdrant Cloud, Pinecone)
-- OpenTelemetry distributed tracing
-- WebSocket real-time updates
-- Plugin marketplace
-- Multi-region deployment
+- **PostgreSQL** — persistent cache + memory
+- **Qdrant** — vector memory
