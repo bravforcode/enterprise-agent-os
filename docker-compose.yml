@@ -1,71 +1,92 @@
-# Enterprise Agent OS — Docker Compose (Development)
-version: "3.9"
-
 services:
-  # PostgreSQL
+  # PostgreSQL for cache and audit logs
   postgres:
     image: postgres:16-alpine
+    container_name: graxia-postgres
     environment:
-      POSTGRES_USER: agent
-      POSTGRES_PASSWORD: agent
-      POSTGRES_DB: agent_os
+      POSTGRES_USER: graxia
+      POSTGRES_PASSWORD: graxia_dev
+      POSTGRES_DB: graxia
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init_postgres.sql:/docker-entrypoint-initdb.d/init.sql:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U agent -d agent_os"]
-      interval: 5s
+      test: ["CMD-SHELL", "pg_isready -U graxia"]
+      interval: 10s
       timeout: 5s
       retries: 5
+    restart: unless-stopped
 
-  # Redis
+  # Redis for prompt cache, semantic cache, rate limiting
   redis:
     image: redis:7-alpine
+    container_name: graxia-redis
+    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru
     ports:
       - "6379:6379"
     volumes:
       - redis_data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
+      interval: 10s
       timeout: 5s
       retries: 5
+    restart: unless-stopped
 
-  # Qdrant (Vector DB)
+  # Qdrant for vector memory
   qdrant:
-    image: qdrant/qdrant:v1.12.0
+    image: qdrant/qdrant:latest
+    container_name: graxia-qdrant
+    environment:
+      QDRANT__SERVICE__GRPC_PORT: 6334
+      QDRANT__SERVICE__HTTP_PORT: 6333
     ports:
       - "6333:6333"
       - "6334:6334"
     volumes:
       - qdrant_data:/qdrant/storage
-    environment:
-      QDRANT__SERVICE__GRPC_PORT: "6334"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:6333/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
 
-  # API Server
-  api:
-    build:
-      context: .
-      dockerfile: docker/Dockerfile
-    ports:
-      - "8000:8000"
+  # Grafana for dashboards
+  grafana:
+    image: grafana/grafana:latest
+    container_name: graxia-grafana
     environment:
-      AOS_DATABASE_URL: postgresql+asyncpg://agent:agent@postgres:5432/agent_os
-      AOS_REDIS_URL: redis://redis:6379/0
-      AOS_QDRANT_URL: http://qdrant:6333
-      AOS_DEBUG: "true"
-      AOS_ENVIRONMENT: development
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    ports:
+      - "3000:3000"
     volumes:
-      - .:/app
-    command: uvicorn agent_os.api.app:app --host 0.0.0.0 --port 8000 --reload
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana-provisioning:/etc/grafana/provisioning:ro
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+  # Prometheus for metrics
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: graxia-prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    restart: unless-stopped
 
 volumes:
   postgres_data:
   redis_data:
   qdrant_data:
+  grafana_data:
+  prometheus_data:
