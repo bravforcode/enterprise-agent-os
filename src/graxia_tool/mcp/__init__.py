@@ -483,6 +483,142 @@ async def _vault_write(args: Dict[str, Any]) -> Dict[str, Any]:
 
 
 # ----------------------------------------------------------------------------
+# Auto-router, session memory, and context cache tools
+# ----------------------------------------------------------------------------
+
+async def _auto_route(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Auto-route a prompt: returns skills, RAG technique, agent, model tier, MCP tools."""
+    from ..auto_router import AutoRouter
+
+    prompt = args.get("prompt", "")
+    if not prompt:
+        return _err("prompt is required")
+
+    try:
+        router = AutoRouter()
+        decision = router.route(prompt)
+        return _ok(decision.to_dict())
+    except Exception as e:
+        logger.exception("auto_route failed")
+        return _err(f"{type(e).__name__}: {e}")
+
+
+async def _memory_recall(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Recall relevant memories for a query using BM25 keyword matching."""
+    from ..session_memory import SessionMemory
+
+    query = args.get("query", "")
+    limit = int(args.get("limit", 5))
+    memory_type = args.get("memory_type")  # Optional filter: task, codebase, preference
+
+    if not query:
+        return _err("query is required")
+
+    try:
+        mem = SessionMemory()
+        results = mem.recall(query, limit=limit, memory_type=memory_type)
+        return _ok({
+            "results": [
+                {
+                    "id": r.memory_id,
+                    "content": r.content,
+                    "type": r.memory_type,
+                    "score": round(r.score, 3),
+                    "created_at": r.created_at,
+                    "extra": r.extra,
+                }
+                for r in results
+            ],
+            "count": len(results),
+        })
+    except Exception as e:
+        logger.exception("memory_recall failed")
+        return _err(f"{type(e).__name__}: {e}")
+
+
+async def _memory_store(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Store a memory (task, codebase knowledge, or preference)."""
+    from ..session_memory import SessionMemory, TaskRecord, CodebaseKnowledge
+
+    memory_type = args.get("memory_type", "preference")
+    content = args.get("content", "")
+
+    if not content:
+        return _err("content is required")
+
+    try:
+        mem = SessionMemory()
+        if memory_type == "task":
+            record = TaskRecord(
+                prompt=content,
+                outcome=args.get("outcome", ""),
+                success=args.get("success", True),
+                duration_ms=args.get("duration_ms", 0),
+                agent_type=args.get("agent_type", ""),
+                intent=args.get("intent", ""),
+            )
+            task_id = mem.remember_task(record)
+            return _ok({"stored": True, "id": task_id, "type": "task"})
+        elif memory_type == "codebase":
+            kb = CodebaseKnowledge(
+                path=args.get("path", ""),
+                summary=content,
+                patterns=args.get("patterns", []),
+                architecture_notes=args.get("architecture_notes", ""),
+            )
+            entry_id = mem.remember_codebase(kb)
+            return _ok({"stored": True, "id": entry_id, "type": "codebase"})
+        elif memory_type == "preference":
+            key = args.get("key", "general")
+            mem.remember_preference(key, content)
+            return _ok({"stored": True, "key": key, "type": "preference"})
+        else:
+            return _err(f"Unknown memory_type: {memory_type}. Use: task, codebase, preference")
+    except Exception as e:
+        logger.exception("memory_store failed")
+        return _err(f"{type(e).__name__}: {e}")
+
+
+async def _context_cache_get(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Get cached context for a prompt."""
+    from ..context_cache import ContextCache
+
+    prompt = args.get("prompt", "")
+    if not prompt:
+        return _err("prompt is required")
+
+    try:
+        cache = ContextCache()
+        cached = cache.get(prompt)
+        if cached is None:
+            return _ok({"hit": False, "prompt": prompt})
+        return _ok({
+            "hit": True,
+            "prompt": prompt,
+            "decision": cached.decision,
+            "result": cached.result,
+            "hit_count": cached.hit_count,
+            "created_at": cached.created_at,
+        })
+    except Exception as e:
+        logger.exception("context_cache_get failed")
+        return _err(f"{type(e).__name__}: {e}")
+
+
+async def _context_cache_stats(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Get context cache statistics (hit rate, entry counts, etc.)."""
+    from ..context_cache import ContextCache
+
+    try:
+        cache = ContextCache()
+        stats = cache.get_stats()
+        return _ok(stats)
+    except Exception as e:
+        logger.exception("context_cache_stats failed")
+        return _err(f"{type(e).__name__}: {e}")
+
+
+# ----------------------------------------------------------------------------
 # LLM function resolver
 # ----------------------------------------------------------------------------
 
@@ -761,6 +897,84 @@ def build_default_registry() -> ToolRegistry:
         },
         handler=_vault_write,
         category="vault",
+    ))
+
+    # Auto-router, session memory, context cache
+    reg.register(Tool(
+        name="auto_route",
+        description="Auto-route a prompt: returns optimal skills, RAG technique, agent, model tier, and MCP tools.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "prompt": {"type": "string", "description": "The user prompt to route"},
+            },
+            "required": ["prompt"],
+        },
+        handler=_auto_route,
+        category="routing",
+    ))
+
+    reg.register(Tool(
+        name="memory_recall",
+        description="Recall relevant memories (tasks, codebase knowledge, preferences) for a query using BM25 keyword matching.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Search query"},
+                "limit": {"type": "integer", "default": 5},
+                "memory_type": {"type": "string", "enum": ["task", "codebase", "preference"],
+                                "description": "Optional filter by memory type"},
+            },
+            "required": ["query"],
+        },
+        handler=_memory_recall,
+        category="memory",
+    ))
+
+    reg.register(Tool(
+        name="memory_store",
+        description="Store a memory: task outcome, codebase knowledge, or user preference.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "memory_type": {"type": "string", "enum": ["task", "codebase", "preference"], "default": "preference"},
+                "content": {"type": "string", "description": "Memory content"},
+                "key": {"type": "string", "description": "Preference key (for preference type)"},
+                "outcome": {"type": "string", "description": "Task outcome (for task type)"},
+                "success": {"type": "boolean", "default": True},
+                "path": {"type": "string", "description": "File path (for codebase type)"},
+                "patterns": {"type": "array", "items": {"type": "string"}},
+                "architecture_notes": {"type": "string"},
+                "agent_type": {"type": "string"},
+                "intent": {"type": "string"},
+                "duration_ms": {"type": "number"},
+            },
+            "required": ["content"],
+        },
+        handler=_memory_store,
+        category="memory",
+    ))
+
+    reg.register(Tool(
+        name="context_cache_get",
+        description="Get cached context (routing decision + result) for a prompt via semantic keyword matching.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "prompt": {"type": "string", "description": "The prompt to look up"},
+            },
+            "required": ["prompt"],
+        },
+        handler=_context_cache_get,
+        category="cache",
+    ))
+
+    reg.register(Tool(
+        name="context_cache_stats",
+        description="Get context cache statistics: hit rate, entry counts, expired entries.",
+        input_schema={"type": "object", "properties": {}},
+        handler=_context_cache_stats,
+        category="cache",
     ))
 
     return reg

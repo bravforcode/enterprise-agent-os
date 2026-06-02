@@ -89,10 +89,10 @@ def _keyword_classify(query: str) -> ClassifiedIntent:
     """Fast keyword-based classification (no LLM needed)."""
     q_lower = query.lower()
 
-    # Intent
+    # Intent (word-boundary matching to avoid false positives like "test" in "latest")
     intent_scores: dict[Intent, float] = {}
     for intent, keywords in INTENT_KEYWORDS.items():
-        score = sum(1 for kw in keywords if kw in q_lower)
+        score = sum(1 for kw in keywords if re.search(r'\b' + re.escape(kw) + r'\b', q_lower))
         if score > 0:
             intent_scores[intent] = score
     intent = max(intent_scores, key=intent_scores.get) if intent_scores else Intent.CONVERSATION
@@ -101,7 +101,7 @@ def _keyword_classify(query: str) -> ClassifiedIntent:
     # Domain
     domain_scores: dict[Domain, float] = {}
     for domain, keywords in DOMAIN_KEYWORDS.items():
-        score = sum(1 for kw in keywords if kw in q_lower)
+        score = sum(1 for kw in keywords if re.search(r'\b' + re.escape(kw) + r'\b', q_lower))
         if score > 0:
             domain_scores[domain] = score
     domain = max(domain_scores, key=domain_scores.get) if domain_scores else Domain.GENERAL
@@ -109,7 +109,7 @@ def _keyword_classify(query: str) -> ClassifiedIntent:
     # Risk
     risk_scores: dict[RiskLevel, float] = {}
     for level, keywords in RISK_KEYWORDS.items():
-        score = sum(1 for kw in keywords if kw in q_lower)
+        score = sum(1 for kw in keywords if re.search(r'\b' + re.escape(kw) + r'\b', q_lower))
         if score > 0:
             risk_scores[level] = score
     risk = max(risk_scores, key=risk_scores.get) if risk_scores else RiskLevel.LOW

@@ -20,6 +20,9 @@ from .governance import PolicyEngine, PolicyDecision
 from .guards import check_input, check_output
 from .agents.base import BaseSubAgent
 from .agents.implementations import AGENT_REGISTRY
+from .auto_router import AutoRouter, RoutingDecision
+from .session_memory import SessionMemory, TaskRecord
+from .context_cache import ContextCache
 from .multi_agent import (
     PatternType,
     PipelineCoordinator,
@@ -81,12 +84,17 @@ class EndToEndPipeline:
         run_logger: RunLogger | None = None,
         policy_engine: PolicyEngine | None = None,
         agents: dict[str, BaseSubAgent] | None = None,
+        session_memory: SessionMemory | None = None,
+        context_cache: ContextCache | None = None,
     ) -> None:
         self.orchestrator = orchestrator or Orchestrator()
         self.output_validator = output_validator or OutputValidator()
         self.run_logger = run_logger
         self.policy_engine = policy_engine or PolicyEngine()
         self.agents = agents or AGENT_REGISTRY
+        self.auto_router = AutoRouter()
+        self.session_memory = session_memory or SessionMemory()
+        self.context_cache = context_cache or ContextCache()
 
     async def process(self, request: PipelineRequest) -> PipelineResponse:
         """Run the full pipeline."""
@@ -120,8 +128,23 @@ class EndToEndPipeline:
             record_guardrail(guard_result.metadata.get("type", "input"), False)
 
         # ============================================================
-        # Stage 2: Intent Classification
+        # Stage 2: Auto-Route (intent + skills + RAG + agent + model)
         # ============================================================
+        routing_decision = self.auto_router.route(
+            request.input,
+            context={**request.context, "session_memory": self.session_memory},
+        )
+        _log_stage("auto_route", "pass",
+                    intent=routing_decision.intent,
+                    agent=routing_decision.agent_type,
+                    rag=routing_decision.rag_technique,
+                    skills=routing_decision.skills,
+                    mcp_tools=routing_decision.mcp_tools,
+                    confidence=routing_decision.confidence,
+                    model_tier=routing_decision.model_tier)
+
+        # Use routing decision to override intent classification
+        # (keep original for governance, but use routing for agent selection)
         intent = await classify_intent(request.input)
         _log_stage("classify", "pass",
                    intent=intent.intent.value, domain=intent.domain.value,
@@ -158,7 +181,7 @@ class EndToEndPipeline:
                 )
 
         # ============================================================
-        # Stage 4: Route to pattern or direct agent
+        # Stage 4: Route to pattern or direct agent (using AutoRouter)
         # ============================================================
         if request.pattern:
             # Multi-agent pattern
@@ -175,9 +198,12 @@ class EndToEndPipeline:
                 pattern_result.get("agents_used", 0)
             )
         else:
-            # Direct agent routing
-            agent_name = self._route_to_agent(intent.intent)
-            if agent_name is None:
+            # Use AutoRouter's agent selection (falls back to intent-based routing)
+            agent_name = routing_decision.agent_type
+            if agent_name not in self.agents:
+                # Fallback to original intent-based routing
+                agent_name = self._route_to_agent(intent.intent)
+            if agent_name is None or agent_name not in self.agents:
                 return self._fail_response(
                     request_id, start, stages,
                     f"No agent found for intent {intent.intent.value}",
@@ -239,6 +265,35 @@ class EndToEndPipeline:
         record_run(
             intent.intent.value, intent.domain.value, "success", duration / 1000
         )
+
+        # ============================================================
+        # Stage 7: Store in Session Memory + Context Cache
+        # ============================================================
+        try:
+            task_record = TaskRecord(
+                task_id=request_id,
+                prompt=request.input,
+                routing_decision=routing_decision.to_dict(),
+                outcome=str(output)[:500],
+                success=True,
+                duration_ms=duration,
+                tokens_used=0,
+                agent_type=routing_decision.agent_type,
+                intent=routing_decision.intent,
+                domain=intent.domain.value,
+            )
+            self.session_memory.remember_task(task_record)
+        except Exception as e:
+            logger.warning("memory_store_failed", error=str(e))
+
+        try:
+            self.context_cache.set(
+                request.input,
+                routing_decision,
+                {"output": str(output)[:1000], "success": True},
+            )
+        except Exception as e:
+            logger.warning("cache_store_failed", error=str(e))
 
         return PipelineResponse(
             request_id=request_id,
