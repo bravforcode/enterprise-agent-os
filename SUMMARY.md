@@ -1,110 +1,158 @@
-# Skill Router v2 + Enterprise OS Phase 0 — SUMMARY
+# Enterprise AI Agent Operating System — Master Plan Progress
 
-## วันที่: 2026-06-02
+## Status: Phases 0-7 Complete
 
----
-
-## Skill Router v2 — 4 Improvements DONE
-
-### 1. Daemon Mode (TCP localhost:19876)
-- **Files**: `skill_router_daemon.py` (12KB), `skill_router_lib.py` (18KB), `skill-router.py` (10KB)
-- **Architecture**: TCP localhost daemon, JSON-RPC protocol, thread-per-connection
-- **Results**:
-  - Daemon load: 0.2s (index + embeddings + ONNX model in memory)
-  - Daemon route: 38ms avg (consistent, no cold-start)
-  - Inline cold: 152ms first query, then ~29ms warm
-  - **First-query speedup: 4.6x** (33ms vs 152ms)
-  - TCP overhead: ~5-10ms (acceptable)
-
-### 2. LLM Judge Tier (Haiku-class)
-- **Location**: `skill_router_lib.py:llm_judge_tiebreak()`
-- **Trigger**: When top-5 scores are within 10% of each other
-- **Mechanism**: Sends top-5 candidates to Haiku for tie-breaking
-- **Activation**: `SKILL_ROUTER_LLM_JUDGE=1` env var
-- **Boost**: +0.15 to selected skill's score
-
-### 3. Trigger-Rate Auto-Promotion
-- **Location**: `skill_router_lib.py:route()` — after stats update
-- **Logic**: If a skill hits >30% of total queries, auto-add to Tier 0 trigger dict
-- **Effect**: Instant matching on subsequent queries (no BM25+dense needed)
-- **Current data**: inbox-triage 4.4%, skill-creator 4.1% — no promotions yet
-
-### 4. 100+ Skill Scale
-- **Tested**: 61 real skills at ~30ms/query
-- **Linear BM25+dense RRF**: ~5ms at 100 skills (predicted)
-- **ONNX inference**: 15-30ms per query (dominates latency)
+### Project: `C:/Users/menum/enterprise-agent-os/`
+### Tests: 137 passing, 1 skipped (Redis not available locally)
 
 ---
 
-## Enterprise OS Phase 0 — Foundation DONE
+## Phases Completed
 
-### Project Structure
+### Phase 0 — Foundation ✅
+- **Project structure**: 9 modules (api, core, memory, rag, skills, tools, agents, guards, observability, eval, governance)
+- **Database**: 8 SQLAlchemy models (users, sessions, agent_runs, skills, tools, api_keys, token_ledger, memory_entries)
+- **Auth**: JWT + API keys + bcrypt
+- **Config**: pydantic-settings with AOS_ prefix
+- **Logging**: structlog + JSON
+- **Docker Compose**: PostgreSQL 16 + Redis 7 + Qdrant 1.12 + API
+- **Dockerfile**: Python 3.12-slim
+- **CI**: GitHub Actions (lint + test + typecheck)
+- **Alembic**: async migration config
+- **Health checks**: /health, /health/ready, /health/live
+- **Tests**: 4 passing
+
+### Phase 1 — Core Runtime ✅
+- **Intent Router**: 11 intents × 12 domains × 4 risk levels, keyword + LLM classification
+- **Orchestrator**: Plan → Execute → Validate flow
+- **Skill Registry**: YAML + markdown loading, hot-reload, intent matching
+- **Tool Registry**: 7 default tools, permission levels 0-4, approval flow
+- **Run Logger**: DB-backed, analytics queries
+- **Output Validator**: Safety patterns, secret redaction, truncation
+- **Approval Flow**: Pending/approved/rejected/expired states
+- **API Routes**: /api/v1/runs, /api/v1/skills, /api/v1/tools, /api/v1/approve
+- **Tests**: 34 passing
+
+### Phase 2 — Token Optimization ✅
+- **Token Budget Manager**: Per-turn + per-day limits, Redis-backed
+- **Model Router**: 4 tiers (Haiku/Mini/Main/Specialized), complexity-based routing
+- **Context Compressor**: Lossless + lossy (summarized) compression
+- **Prompt Cache**: Redis-backed, hash-keyed caching
+- **Cost Ledger**: Per-run cost tracking, by-model analytics
+- **Tests**: 15 passing
+
+### Phase 3 — Memory OS ✅
+- **8 Memory Layers**:
+  1. Working (5min TTL, Redis)
+  2. Short-term (7 days, Redis+DB)
+  3. Long-term (persistent, DB+Qdrant)
+  4. Episodic (1 year, DB)
+  5. Semantic (persistent, Qdrant)
+  6. Procedural (persistent, DB)
+  7. Failure (persistent, DB)
+  8. Preference (persistent, DB)
+- **Decay**: Ebbinghaus curve with access boost
+- **Recall**: Vector + keyword + decay scoring
+- **Tests**: 10 passing
+
+### Phase 4 — RAG OS ✅
+- **Ingestion**: PDF, MD, HTML, code, JSON, TXT
+- **Chunking**: Fixed + Semantic + Code-aware (3 strategies)
+- **Hybrid Retrieval**: BM25 + dense vector + RRF
+- **Reranking**: Cross-encoder proxy (keyword overlap)
+- **Citations**: Per-chunk source/title/index
+- **Tests**: 17 passing
+
+### Phase 5 — Sub-Agent Runtime ✅
+- **15 Sub-Agents**:
+  - coder, debugger, tester, reviewer, deployer
+  - documenter, researcher, data_engineer, sysadmin
+  - conversational, general, validator
+  - planner, architect, security_auditor
+- **Base Class**: timing, error handling, LLM injection
+- **Registry**: Auto-discovery, get_agent(), list_agents()
+- **Tests**: 30 passing
+
+### Phase 6-7 — Eval + Governance ✅
+- **Policy Engine**: 4 default policies, decision enum, audit log
+- **Audit Trail**: Every action logged with user/decision/reason
+- **Eval Framework**: EvalRunner, 4 evaluators (exact, contains, keyword, similarity)
+- **Metrics**: Counters, gauges, histograms with p50/p95/p99
+- **Alerts**: Threshold-based, severity levels
+- **Tracing**: Span-based tracing
+- **Guardrails**: Injection detection, PII redaction, harmful content
+- **Tests**: 31 passing
+
+---
+
+## Module Summary
+
+| Module | File | Purpose |
+|---|---|---|
+| `core.config` | `config.py` | Settings via env vars |
+| `core.models` | `models.py` | 8 DB tables |
+| `core.database` | `database.py` | Async PostgreSQL |
+| `core.auth` | `auth.py` | JWT + API keys |
+| `core.logging` | `logging.py` | structlog |
+| `core.intent_router` | `intent_router.py` | Intent classification |
+| `core.orchestrator` | `orchestrator.py` | Plan/execute |
+| `core.run_logger` | `run_logger.py` | Run tracking |
+| `core.output_validator` | `output_validator.py` | Safety checks |
+| `core.approval_flow` | `approval_flow.py` | Human-in-loop |
+| `core.token_budget` | `token_budget.py` | Token limits |
+| `core.model_router` | `model_router.py` | Model selection |
+| `core.context_compressor` | `context_compressor.py` | Context trim |
+| `core.prompt_cache` | `prompt_cache.py` | LLM response cache |
+| `core.cost_ledger` | `cost_ledger.py` | Cost tracking |
+| `memory.layers` | `layers.py` | 8 memory types |
+| `memory.memory_os` | `memory_os.py` | Memory CRUD |
+| `rag.ingestion` | `ingestion.py` | Doc loaders |
+| `rag.chunker` | `chunker.py` | Chunking |
+| `rag.retriever` | `retriever.py` | Hybrid search |
+| `rag.rag_os` | `rag_os.py` | RAG pipeline |
+| `skills.registry` | `registry.py` | Skill CRUD |
+| `tools.registry` | `registry.py` | Tool permissions |
+| `agents.base` | `base.py` | Sub-agent base |
+| `agents.implementations` | `implementations.py` | 15 sub-agents |
+| `governance` | `governance.py` | Policy engine |
+| `eval.framework` | `framework.py` | Eval runner |
+| `observability.metrics` | `metrics.py` | Metrics+alerts+tracing |
+| `guards` | `__init__.py` | Safety checks |
+
+---
+
+## Test Statistics
+
 ```
-enterprise-agent-os/
-├── src/agent_os/
-│   ├── api/app.py          # FastAPI + health checks
-│   ├── core/
-│   │   ├── config.py       # pydantic-settings (AOS_ prefix)
-│   │   ├── models.py       # SQLAlchemy models (8 tables)
-│   │   ├── database.py     # async PostgreSQL + session factory
-│   │   ├── auth.py         # JWT + API keys + bcrypt
-│   │   └── logging.py      # structlog + JSON
-│   ├── memory/             # Phase 3
-│   ├── rag/                # Phase 4
-│   ├── skills/             # Phase 1
-│   ├── tools/              # Phase 1
-│   ├── guards/             # Phase 7
-│   ├── observability/      # Phase 7
-│   └── eval/               # Phase 6
-├── alembic/                # DB migrations
-├── docker/
-│   └── Dockerfile          # Python 3.12-slim
-├── docker-compose.yml      # PostgreSQL + Redis + Qdrant + API
-├── .github/workflows/ci.yml  # lint + test + typecheck
-├── tests/test_core.py      # basic config + model tests
-├── pyproject.toml          # hatchling + all deps
-├── alembic.ini             # async migration config
-├── .env.example            # env template
-└── .gitignore
+test_core.py: 4 tests
+test_phase1.py: 30 tests (Intent, Tool, Skill, Output, Approval)
+test_phase2.py: 15 tests (ModelRouter, ContextCompressor, TokenBudget, PromptCache)
+test_phase3.py: 10 tests (MemoryLayers, MemoryOS)
+test_phase4.py: 17 tests (Ingestion, Chunker, Retriever, RAGOS)
+test_phase5.py: 30 tests (15 agents + base + registry)
+test_phase6_7.py: 31 tests (Governance, Eval, Metrics, Guards)
+
+Total: 137 passing, 1 skipped
 ```
-
-### Database Models (8 tables)
-1. **users** — username, email, hashed_password, is_admin
-2. **sessions** — user_id, tool, status, total_tokens, total_cost
-3. **agent_runs** — session_id, parent_run_id, agent_type, status, risk_level, user_query, classified_intent, selected_skills, selected_tools, plan, result, tokens, cost, model_used
-4. **skills** — name, description, path, tier, trust_score, triggers
-5. **tools** — name, description, permission_level (0-4), risk_level, requires_approval, schema_def
-6. **api_keys** — user_id, key_hash, prefix, scopes, expires_at
-7. **token_ledger** — run_id, model, tokens_input, tokens_output, cost_usd, cached
-8. **memory_entries** — user_id, layer, content, embedding_id, decay_score
-
-### Health Checks
-- `GET /health` — basic health
-- `GET /health/ready` — readiness (DB + Redis connectivity)
-- `GET /health/live` — liveness probe
-
-### Docker Compose
-- PostgreSQL 16 Alpine
-- Redis 7 Alpine
-- Qdrant v1.12.0 (vector DB)
-- API server (uvicorn --reload)
-
-### CI Pipeline
-- Lint: ruff check + format
-- Test: pytest + coverage
-- Typecheck: mypy
 
 ---
 
-## Files Created/Modified
-- `~/.local/bin/skill_router_daemon.py` (12KB) — TCP daemon
-- `~/.local/bin/skill_router_lib.py` (18KB) — shared library
-- `~/.local/bin/skill-router.py` (10KB) — CLI + daemon client
-- `enterprise-agent-os/` — full project structure
+## Git History
 
-## Next Steps
-1. Enterprise OS Phase 1: Intent Router + Orchestrator + Skill/Tool Registries
-2. Enterprise OS Phase 2: Token Budget Manager + Model Router
-3. Enterprise OS Phase 3: Memory OS (8 layers)
-4. Enterprise OS Phase 4: RAG OS (hybrid retrieval)
-5. Scale skill router to daemon mode on startup script
+```
+feat(phase6-7): governance, eval, observability, guardrails
+feat(phase5): 15 sub-agents
+feat(phase4): RAG OS
+feat(phase3): memory OS
+feat(phase2): token optimization
+feat(phase1): intent router, orchestrator, registries
+feat(enterprise-os): Phase 0 foundation
+```
+
+---
+
+## What's Next (Phase 8+)
+
+- **Phase 8**: Multi-Agent (7 patterns: pipeline, parallel, hierarchical, mesh, consensus, marketplace, debate)
+- **Phase 9**: Production deployment (k8s, helm, Terraform)
+- **Phase 10+**: Observability dashboards, eval dashboards, cost optimization

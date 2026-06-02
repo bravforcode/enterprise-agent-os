@@ -98,6 +98,10 @@ async def liveness_check():
 from .routes_v1 import router as v1_router
 app.include_router(v1_router)
 
+# --- API Routes (Phase 8: Multi-Agent) ---
+from .routes_multi_agent import router as multi_agent_router
+app.include_router(multi_agent_router)
+
 
 @app.get("/api/v1/status")
 async def api_status():
