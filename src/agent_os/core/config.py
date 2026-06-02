@@ -74,6 +74,7 @@ class Settings(BaseSettings):
         "env_file_encoding": "utf-8",
         "env_prefix": "AOS_",
         "case_sensitive": False,
+        "extra": "ignore",  # Ignore unknown env vars
     }
 
 

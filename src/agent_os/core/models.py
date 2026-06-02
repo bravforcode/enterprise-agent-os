@@ -68,7 +68,7 @@ class AgentRun(Base):
     duration_ms = Column(Integer)
 
     # Metadata
-    metadata = Column(JSON, default=dict)
+    extra_data = Column(JSON, default=dict)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     __table_args__ = (
@@ -136,7 +136,7 @@ class Skill(Base):
     tier = Column(Integer, default=2)
     trust_score = Column(Float, default=1.0)
     triggers = Column(JSON, default=list)
-    metadata = Column(JSON, default=dict)
+    extra_data = Column(JSON, default=dict)
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -185,7 +185,7 @@ class MemoryEntry(Base):
     layer = Column(String(50), nullable=False)  # preference, episodic, semantic, procedural, failure
     content = Column(Text, nullable=False)
     embedding_id = Column(String(100))  # Qdrant point ID
-    metadata = Column(JSON, default=dict)
+    extra_data = Column(JSON, default=dict)
     access_count = Column(Integer, default=0)
     last_accessed = Column(DateTime)
     decay_score = Column(Float, default=1.0)
