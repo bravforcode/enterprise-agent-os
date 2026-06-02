@@ -44,6 +44,62 @@ from .techniques.hypothetical_questions import (
     index_with_questions,
     retrieve_with_questions,
 )
+from .techniques.graph_rag import (
+    graph_rag_retrieve,
+    graph_rag_full,
+    KnowledgeGraph,
+    extract_entities,
+    extract_relationships,
+    detect_communities,
+    personalized_pagerank,
+)
+from .techniques.self_rag import (
+    self_rag_pipeline,
+    should_retrieve,
+    assess_relevance,
+    assess_support,
+    assess_usefulness,
+    self_critique,
+    iterative_self_rag,
+    ReflectionTokens,
+    SelfRAGResult,
+)
+from .techniques.corrective_rag import (
+    crag_pipeline,
+    correct_knowledge,
+    assess_retrieval,
+    refine_knowledge,
+    RetrievalAssessment,
+    RefinedKnowledge,
+    CRAGResult,
+)
+from .techniques.chunk_free_rag import (
+    chunk_free_pipeline,
+    chunk_free_retrieve,
+    extract_meta_markers,
+    extract_atomic_facts,
+    MetaMarker,
+    AtomicFact,
+    ChunkFreeResult,
+)
+from .techniques.agentic_rag import (
+    agentic_rag_pipeline,
+    agentic_retrieve,
+    decompose_query,
+    expand_query,
+    QueryDecomposition,
+    AgenticResult,
+)
+from .techniques.diversity_rag import (
+    diversity_rag_pipeline,
+    diversity_retrieve,
+    mmr_select,
+    adaptive_lambda,
+    detect_redundancy,
+    deduplicate_chunks,
+    DiversityConfig,
+    DiversityResult,
+)
 
 
 class RAGEngine:
@@ -313,6 +369,12 @@ register_technique("keyword_rerank", keyword_rerank)
 register_technique("contextual_headers", add_contextual_headers)
 register_technique("context_window", enrich_with_context_window)
 register_technique("hypothetical_questions", generate_questions)
+register_technique("graph_rag", graph_rag_full)
+register_technique("self_rag", self_rag_pipeline)
+register_technique("corrective_rag", crag_pipeline)
+register_technique("chunk_free_rag", chunk_free_pipeline)
+register_technique("agentic_rag", agentic_rag_pipeline)
+register_technique("diversity_rag", diversity_rag_pipeline)
 
 
 __all__ = [
@@ -334,7 +396,7 @@ __all__ = [
     "RetrievalResult",
     "BM25",
     "tokenize",
-    # Techniques
+    # Techniques — existing
     "hybrid_search",
     "cross_encoder_rerank",
     "keyword_rerank",
@@ -345,6 +407,56 @@ __all__ = [
     "generate_questions",
     "index_with_questions",
     "retrieve_with_questions",
+    # Techniques — GraphRAG
+    "graph_rag_retrieve",
+    "graph_rag_full",
+    "KnowledgeGraph",
+    "extract_entities",
+    "extract_relationships",
+    "detect_communities",
+    "personalized_pagerank",
+    # Techniques — Self-RAG
+    "self_rag_pipeline",
+    "should_retrieve",
+    "assess_relevance",
+    "assess_support",
+    "assess_usefulness",
+    "self_critique",
+    "iterative_self_rag",
+    "ReflectionTokens",
+    "SelfRAGResult",
+    # Techniques — Corrective RAG
+    "crag_pipeline",
+    "correct_knowledge",
+    "assess_retrieval",
+    "refine_knowledge",
+    "RetrievalAssessment",
+    "RefinedKnowledge",
+    "CRAGResult",
+    # Techniques — Chunk-Free RAG
+    "chunk_free_pipeline",
+    "chunk_free_retrieve",
+    "extract_meta_markers",
+    "extract_atomic_facts",
+    "MetaMarker",
+    "AtomicFact",
+    "ChunkFreeResult",
+    # Techniques — Agentic RAG
+    "agentic_rag_pipeline",
+    "agentic_retrieve",
+    "decompose_query",
+    "expand_query",
+    "QueryDecomposition",
+    "AgenticResult",
+    # Techniques — Diversity RAG
+    "diversity_rag_pipeline",
+    "diversity_retrieve",
+    "mmr_select",
+    "adaptive_lambda",
+    "detect_redundancy",
+    "deduplicate_chunks",
+    "DiversityConfig",
+    "DiversityResult",
     # Multimodal
     "MultimodalContent",
     "MultimodalIndexer",
