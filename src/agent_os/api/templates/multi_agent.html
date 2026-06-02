@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Multi-Agent Playground</h1>
+<p>Test all 7 multi-agent patterns.</p>
+
+<div class="patterns-grid">
+    <div class="pattern-card" data-pattern="pipeline">
+        <h3>Pipeline</h3>
+        <p>Sequential: plan → implement → review</p>
+    </div>
+    <div class="pattern-card" data-pattern="supervisor">
+        <h3>Supervisor</h3>
+        <p>Centralized: 1 orchestrator + workers</p>
+    </div>
+    <div class="pattern-card" data-pattern="parallel">
+        <h3>Parallel</h3>
+        <p>Fan-out/fan-in: 3-10x faster</p>
+    </div>
+    <div class="pattern-card" data-pattern="hierarchical">
+        <h3>Hierarchical</h3>
+        <p>Tree of supervisors</p>
+    </div>
+    <div class="pattern-card" data-pattern="debate">
+        <h3>Debate</h3>
+        <p>Adversarial + judge (2.5x cost)</p>
+    </div>
+    <div class="pattern-card" data-pattern="consensus">
+        <h3>Consensus</h3>
+        <p>Independent + vote</p>
+    </div>
+    <div class="pattern-card" data-pattern="marketplace">
+        <h3>Marketplace</h3>
+        <p>Contract-Net bidding</p>
+    </div>
+</div>
+
+<div class="card">
+    <h2>Test Pattern</h2>
+    <form id="pattern-form">
+        <label>Pattern:</label>
+        <select name="pattern" id="pattern-select">
+            <option value="pipeline">Pipeline</option>
+            <option value="supervisor">Supervisor</option>
+            <option value="parallel">Parallel</option>
+            <option value="hierarchical">Hierarchical</option>
+            <option value="debate">Debate</option>
+            <option value="consensus">Consensus</option>
+            <option value="marketplace">Marketplace</option>
+        </select>
+        <label>Task:</label>
+        <textarea name="task" id="task-input" rows="3" placeholder="What should the agents do?">Write and review a Python function to compute fibonacci</textarea>
+        <button type="submit">Run</button>
+    </form>
+    <div id="pattern-result" class="result-box"></div>
+</div>
+{% endblock %}

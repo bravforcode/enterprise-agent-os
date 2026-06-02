@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Agent OS Dashboard</h1>
+<div hx-get="/ui/partials/stats" hx-trigger="load, every 5s" hx-swap="innerHTML">
+    Loading stats...
+</div>
+
+<div class="grid-2">
+    <div class="card">
+        <h2>Quick Run</h2>
+        <form hx-post="/api/v1/pipeline/run"
+              hx-target="#result"
+              hx-swap="innerHTML"
+              hx-headers='{"Authorization": "Bearer " + (localStorage.getItem("token") || "")}'>
+            <textarea name="input" placeholder="Ask the agent..." rows="4" required></textarea>
+            <select name="pattern">
+                <option value="">Direct Agent</option>
+                <option value="pipeline">Pipeline</option>
+                <option value="supervisor">Supervisor</option>
+                <option value="parallel">Parallel</option>
+                <option value="hierarchical">Hierarchical</option>
+                <option value="debate">Debate</option>
+                <option value="consensus">Consensus</option>
+                <option value="marketplace">Marketplace</option>
+            </select>
+            <button type="submit">Run</button>
+        </form>
+        <div id="result" class="result-box"></div>
+    </div>
+    <div class="card">
+        <h2>System Status</h2>
+        <ul>
+            <li>API: <span class="ok">Healthy</span></li>
+            <li>PostgreSQL: <span class="ok">Connected</span></li>
+            <li>Redis: <span class="ok">Connected</span></li>
+            <li>Qdrant: <span class="ok">Connected</span></li>
+        </ul>
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,8 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Runs</h1>
+<p>Recent agent runs (HTMX auto-refresh every 5s)</p>
+<div hx-get="/api/v1/runs" hx-trigger="load, every 5s" hx-swap="innerHTML">
+    Loading runs...
+</div>
+{% endblock %}

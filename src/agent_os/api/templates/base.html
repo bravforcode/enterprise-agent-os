@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ title }} - Agent OS</title>
+    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+    <link rel="stylesheet" href="/ui/static/style.css">
+</head>
+<body>
+    <nav class="navbar">
+        <div class="nav-brand">Agent OS</div>
+        <div class="nav-links">
+            <a href="/ui/">Dashboard</a>
+            <a href="/ui/runs">Runs</a>
+            <a href="/ui/multi-agent">Multi-Agent</a>
+            <a href="/ui/metrics-view">Metrics</a>
+            <a href="/docs">API Docs</a>
+            <a href="/metrics">/metrics</a>
+        </div>
+    </nav>
+    <main class="container">
+        {% block content %}{% endblock %}
+    </main>
+    <script src="/ui/static/app.js"></script>
+</body>
+</html>

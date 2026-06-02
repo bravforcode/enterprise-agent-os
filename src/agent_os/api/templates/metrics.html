@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Metrics</h1>
+<p>Real-time Prometheus metrics</p>
+<iframe src="http://localhost:3000/d/agentos-ops" width="100%" height="800px" style="border: 0;"></iframe>
+<div class="card">
+    <h2>Raw Metrics</h2>
+    <a href="/metrics" target="_blank">View /metrics endpoint</a>
+</div>
+{% endblock %}

@@ -34,18 +34,20 @@ def build_coordinator(
     if agent_names:
         for name in agent_names:
             if name in AGENT_REGISTRY:
-                agents[name] = AGENT_REGISTRY[name]
+                cls = AGENT_REGISTRY[name]
+                agents[name] = cls() if isinstance(cls, type) else cls
     else:
         # Auto-collect from config
         names = _extract_agent_names(pattern, config)
         for name in names:
             if name in AGENT_REGISTRY:
-                agents[name] = AGENT_REGISTRY[name]
+                cls = AGENT_REGISTRY[name]
+                agents[name] = cls() if isinstance(cls, type) else cls
             else:
                 # Try to find by partial match (e.g., "coder" → "coder" agent)
-                for reg_name, agent in AGENT_REGISTRY.items():
+                for reg_name, agent_cls in AGENT_REGISTRY.items():
                     if name in reg_name or reg_name in name:
-                        agents[name] = agent
+                        agents[name] = agent_cls() if isinstance(agent_cls, type) else agent_cls
                         break
     return create_coordinator(
         pattern=pattern, config=config, agents=agents, llm_call=llm_call

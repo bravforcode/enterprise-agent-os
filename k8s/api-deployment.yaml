@@ -1,0 +1,199 @@
+---
+# Kubernetes deployment for Enterprise Agent OS API
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent-os-api
+  labels:
+    app: agent-os
+    component: api
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: agent-os
+      component: api
+  template:
+    metadata:
+      labels:
+        app: agent-os
+        component: api
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+        prometheus.io/path: "/metrics"
+    spec:
+      containers:
+      - name: api
+        image: agent-os/api:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8000
+          name: http
+          protocol: TCP
+        env:
+        - name: AOS_DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: agent-os-secrets
+              key: database-url
+        - name: AOS_REDIS_URL
+          valueFrom:
+            secretKeyRef:
+              name: agent-os-secrets
+              key: redis-url
+        - name: AOS_QDRANT_URL
+          valueFrom:
+            secretKeyRef:
+              name: agent-os-secrets
+              key: qdrant-url
+        - name: AOS_JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: agent-os-secrets
+              key: jwt-secret
+        - name: AOS_LLM_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: agent-os-secrets
+              key: llm-api-key
+        - name: AOS_LOG_LEVEL
+          value: "INFO"
+        - name: AOS_LOG_FORMAT
+          value: "json"
+        - name: AOS_ENABLE_METRICS
+          value: "true"
+        - name: AOS_WORKERS
+          value: "4"
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "2000m"
+        livenessProbe:
+          httpGet:
+            path: /health/live
+            port: 8000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /health/ready
+            port: 8000
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 1000
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+        volumeMounts:
+        - name: tmp
+          mountPath: /tmp
+      volumes:
+      - name: tmp
+        emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: agent-os-api
+  labels:
+    app: agent-os
+    component: api
+spec:
+  type: ClusterIP
+  ports:
+  - port: 80
+    targetPort: 8000
+    protocol: TCP
+    name: http
+  selector:
+    app: agent-os
+    component: api
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: agent-os-api
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: agent-os-api
+  minReplicas: 3
+  maxReplicas: 20
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+    scaleUp:
+      stabilizationWindowSeconds: 30
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: agent-os-api
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: agent-os
+      component: api
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: agent-os-api
+spec:
+  podSelector:
+    matchLabels:
+      app: agent-os
+      component: api
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: ingress
+    - podSelector: {}
+    ports:
+    - protocol: TCP
+      port: 8000
+  egress:
+  - to:
+    - namespaceSelector: {}
+    ports:
+    - protocol: TCP
+      port: 5432  # PostgreSQL
+    - protocol: TCP
+      port: 6379  # Redis
+    - protocol: TCP
+      port: 6333  # Qdrant
+    - protocol: TCP
+      port: 443   # HTTPS for LLM APIs
+    - protocol: DNS
+      port: 53

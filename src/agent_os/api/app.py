@@ -1,11 +1,16 @@
 """Enterprise Agent OS — FastAPI application."""
 from __future__ import annotations
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
 from .core.config import settings
 from .core.database import init_db, close_db
 from .core.logging import setup_logging, get_logger
+from .observability.prometheus import (
+    get_metrics,
+    get_metrics_content_type,
+    init_system_info,
+)
 
 
 @asynccontextmanager
@@ -18,6 +23,10 @@ async def lifespan(app: FastAPI):
     # Init database
     await init_db()
     logger.info("database_ready")
+
+    # Init metrics
+    init_system_info(version=settings.app_version)
+    logger.info("metrics_ready")
 
     yield
 
@@ -101,6 +110,24 @@ app.include_router(v1_router)
 # --- API Routes (Phase 8: Multi-Agent) ---
 from .routes_multi_agent import router as multi_agent_router
 app.include_router(multi_agent_router)
+
+# --- API Routes (Phase 12: End-to-End Pipeline) ---
+from .routes_pipeline import router as pipeline_router
+app.include_router(pipeline_router)
+
+# --- API Routes (Phase 14: Web UI) ---
+from .routes_ui import router as ui_router
+app.include_router(ui_router)
+
+
+# --- Metrics Endpoint (Phase 10) ---
+@app.get("/metrics")
+async def metrics():
+    """Prometheus metrics endpoint."""
+    return Response(
+        content=get_metrics(),
+        media_type=get_metrics_content_type(),
+    )
 
 
 @app.get("/api/v1/status")

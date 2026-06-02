@@ -1,0 +1,14 @@
+apiVersion: v2
+name: agent-os
+description: Enterprise AI Agent Operating System
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - ai
+  - agents
+  - llm
+  - enterprise
+maintainers:
+  - name: Agent OS Team
+    email: ops@agent-os.example.com
