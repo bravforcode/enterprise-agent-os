@@ -259,8 +259,12 @@ class EndToEndPipeline:
         if agent is None:
             raise KeyError(f"Agent {agent_name!r} not found")
         if isinstance(agent, type):
-            agent = agent()
-            self.agents[agent_name] = agent
+            # Instantiate and cache only locally (don't mutate shared registry)
+            instance = agent()
+            # Only cache locally if self.agents is a copy, not the shared registry
+            if self.agents is not AGENT_REGISTRY:
+                self.agents[agent_name] = instance
+            return instance
         return agent
 
     def _map_intent_to_action(self, intent: Any) -> str:

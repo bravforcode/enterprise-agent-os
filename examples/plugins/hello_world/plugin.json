@@ -1,0 +1,28 @@
+{
+  "name": "hello_world",
+  "version": "1.0.0",
+  "description": "Example plugin that greets the world",
+  "author": "Graxia Team",
+  "entry": "main.py",
+  "tools": [
+    {
+      "name": "hello",
+      "description": "Say hello to someone",
+      "function": "main:hello"
+    },
+    {
+      "name": "goodbye",
+      "description": "Say goodbye to someone",
+      "function": "main:goodbye"
+    }
+  ],
+  "agents": [],
+  "skills": [],
+  "hooks": [
+    {
+      "event": "agent_run",
+      "function": "main:on_agent_run"
+    }
+  ],
+  "permissions": ["network"]
+}
