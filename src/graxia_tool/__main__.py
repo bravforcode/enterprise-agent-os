@@ -65,11 +65,11 @@ def main():
         from .ollama_helper import is_ollama_installed, is_ollama_running
         print("Graxia Tool Status")
         print("=" * 40)
-        print(f"  Ollama installed: {'✓' if is_ollama_installed() else '✗'}")
+        print(f"  Ollama installed: {'YES' if is_ollama_installed() else 'NO'}")
 
         async def check_running():
             running = await is_ollama_running()
-            print(f"  Ollama running:   {'✓' if running else '✗'}")
+            print(f"  Ollama running:   {'YES' if running else 'NO'}")
             if running:
                 from .llm import OllamaClient
                 client = OllamaClient()
@@ -94,12 +94,19 @@ def main():
 
     # Default: start MCP server
     try:
-        from .mcp import run_server
+        from .mcp import main as mcp_main, MCPServer
     except ImportError as e:
         print(f"MCP server requires: pip install graxia-tool[mcp]")
         print(f"Error: {e}")
         sys.exit(1)
-    run_server()
+    # MCP's main() uses argparse on sys.argv. We've already parsed 'mcp'
+    # out, so strip our own args before delegating.
+    sys.argv = [sys.argv[0]]
+    # If no MCP args, run stdio directly to avoid argparse parsing our subcommand
+    if len(sys.argv) == 1:
+        asyncio.run(MCPServer().run_stdio())
+    else:
+        mcp_main()
 
 
 if __name__ == "__main__":

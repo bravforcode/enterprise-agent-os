@@ -110,7 +110,7 @@ async def _agent_run(args: Dict[str, Any]) -> Dict[str, Any]:
     """Run a sub-agent by name."""
     from ..agents import AGENT_REGISTRY, list_agents
 
-    agent_name = args.get("agent_name", "")
+    agent_name = args.get("agent_name") or args.get("agent", "")
     query = args.get("query", "")
     context = args.get("context", {}) or {}
     llm_func = args.get("llm_func")  # Optional callable name
@@ -294,7 +294,7 @@ async def _cache_set(args: Dict[str, Any]) -> Dict[str, Any]:
 
 async def _cost_report(args: Dict[str, Any]) -> Dict[str, Any]:
     """Get cost report from the cost engine."""
-    from ..cost_engine import CostEngine
+    from ..cost_engine.engine import CostEngine
 
     period = args.get("period", "all")  # hour, day, week, all
     try:
@@ -517,11 +517,12 @@ def build_default_registry() -> ToolRegistry:
             "type": "object",
             "properties": {
                 "agent_name": {"type": "string", "description": "Name of the agent: coder, debugger, tester, reviewer, deployer, documenter, researcher, data_engineer, sysadmin, conversational, general, validator, planner, architect, security_auditor"},
+                "agent": {"type": "string", "description": "Alias for agent_name (use either)"},
                 "query": {"type": "string", "description": "The query / task to run"},
                 "context": {"type": "object", "description": "Optional context dict"},
                 "llm_func": {"type": "string", "description": "Optional name of registered LLM function"},
             },
-            "required": ["agent_name", "query"],
+            "required": ["query"],
         },
         handler=_agent_run,
         category="agents",

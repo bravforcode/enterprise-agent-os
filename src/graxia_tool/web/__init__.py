@@ -366,3 +366,25 @@ DASHBOARD_HTML = """
 async def dashboard():
     """Web dashboard."""
     return DASHBOARD_HTML
+
+
+# --- Server Entry Point ---
+
+
+def run_server(host: str = "127.0.0.1", port: int = 8000, log_level: str = "info") -> None:
+    """Run the FastAPI server with uvicorn.
+
+    Usage:
+        from graxia_tool.web import run_server
+        run_server()  # http://127.0.0.1:8000
+    """
+    try:
+        import uvicorn
+    except ImportError as e:
+        raise RuntimeError(
+            "uvicorn is required for the web server. "
+            "Install with: pip install graxia-tool[web]"
+        ) from e
+    print(f"Starting Graxia Tool web UI at http://{host}:{port}")
+    print("Press Ctrl+C to stop")
+    uvicorn.run(app, host=host, port=port, log_level=log_level)
