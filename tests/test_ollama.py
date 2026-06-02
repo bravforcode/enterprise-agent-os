@@ -118,7 +118,7 @@ async def test_ollama_complete_success():
     assert result.tokens_in == 10
     assert result.tokens_out == 5
     assert result.cost_usd == 0.0  # Local model is free
-    assert result.model == "llama3.2"
+    assert result.model == "llama3.2:1b"
 
 
 @pytest.mark.asyncio

@@ -50,7 +50,7 @@ MODEL_COSTS = {
 
 
 # Default Ollama model — small, fast, good enough
-DEFAULT_OLLAMA_MODEL = "llama3.2"
+DEFAULT_OLLAMA_MODEL = "llama3.2:1b"
 
 
 @dataclass

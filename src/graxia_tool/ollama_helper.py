@@ -25,7 +25,7 @@ from typing import Optional
 import httpx
 
 
-DEFAULT_MODEL = "llama3.2"
+DEFAULT_MODEL = "llama3.2:1b"
 OLLAMA_PORT = 11434
 OLLAMA_URL = f"http://localhost:{OLLAMA_PORT}"
 
