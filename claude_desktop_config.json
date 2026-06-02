@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "graxia_tool": {
+      "command": "python",
+      "args": [
+        "-m", "graxia_tool.mcp",
+        "--transport", "stdio"
+      ],
+      "env": {
+        "PYTHONPATH": "C:\\Users\\menum\\enterprise-agent-os\\src",
+        "PYTHONIOENCODING": "utf-8",
+        "AGENT_OS_VAULT_PATH": "C:\\Users\\menum\\Documents\\ObsidianVault\\Second Brain"
+      }
+    }
+  }
+}

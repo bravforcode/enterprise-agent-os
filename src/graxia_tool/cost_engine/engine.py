@@ -22,7 +22,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 
-logger = logging.getLogger("agent_os.cost_engine")
+logger = logging.getLogger("graxia_tool.cost_engine")
 
 # Cost per 1K tokens (USD) — example rates
 COST_PER_1K = {

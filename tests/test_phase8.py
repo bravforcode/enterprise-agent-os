@@ -3,8 +3,8 @@ import pytest
 import asyncio
 from datetime import datetime
 
-from agent_os.agents.base import BaseSubAgent, SubAgentResult
-from agent_os.multi_agent import (
+from graxia_tool.agents.base import BaseSubAgent, SubAgentResult
+from graxia_tool.multi_agent import (
     MultiAgentCoordinator,
     PatternType,
     SharedState,
@@ -19,7 +19,7 @@ from agent_os.multi_agent import (
     MarketplaceCoordinator,
     create_coordinator,
 )
-from agent_os.multi_agent.builder import build_coordinator, list_available_agents
+from graxia_tool.multi_agent.builder import build_coordinator, list_available_agents
 
 
 # --- Test fixtures ---
@@ -409,7 +409,7 @@ class TestBuilder:
 class TestIntegration:
     @pytest.mark.asyncio
     async def test_real_coder_pipeline(self):
-        from agent_os.agents.implementations import Coder, Reviewer
+        from graxia_tool.agents.implementations import Coder, Reviewer
         agents = {
             "coder": Coder(),
             "reviewer": Reviewer(),

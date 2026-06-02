@@ -3,12 +3,12 @@ import pytest
 import tempfile
 import os
 from pathlib import Path
-from agent_os.rag.ingestion import (
+from graxia_tool.rag.ingestion import (
     Document, load_document, load_directory, load_markdown, load_code, load_json,
 )
-from agent_os.rag.chunker import Chunker
-from agent_os.rag.retriever import HybridRetriever, BM25, tokenize
-from agent_os.rag.rag_os import RAGOS
+from graxia_tool.rag.chunker import Chunker
+from graxia_tool.rag.retriever import HybridRetriever, BM25, tokenize
+from graxia_tool.rag.rag_os import RAGOS
 
 
 class TestIngestion:
@@ -25,7 +25,7 @@ class TestIngestion:
         with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False, encoding="utf-8") as f:
             f.write("Hello world")
             path = Path(f.name)
-        from agent_os.rag.ingestion import load_text
+        from graxia_tool.rag.ingestion import load_text
         doc = load_text(path)
         assert doc.content == "Hello world"
         path.unlink()
@@ -134,7 +134,7 @@ class TestRetriever:
         assert results == []
 
     def test_retrieve(self):
-        from agent_os.rag.chunker import Chunk
+        from graxia_tool.rag.chunker import Chunk
         chunks = [
             Chunk(id="1", doc_id="1", content="Python is a programming language",
                   index=0, start_char=0, end_char=36, doc_type="text", source="1"),
@@ -152,7 +152,7 @@ class TestRetriever:
         assert "1" in top_ids or "3" in top_ids
 
     def test_citation_format(self):
-        from agent_os.rag.chunker import Chunk
+        from graxia_tool.rag.chunker import Chunk
         chunk = Chunk(id="1", doc_id="1", content="test",
                       index=0, start_char=0, end_char=4, doc_type="text",
                       source="docs/test.md", title="Test")

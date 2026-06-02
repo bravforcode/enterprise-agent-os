@@ -202,12 +202,12 @@ class RegressionHarness:
 
 # CLI entry point
 async def _cli_main() -> None:
-    """CLI: python -m agent_os.eval.regression <dataset_name>"""
+    """CLI: python -m graxia_tool.eval.regression <dataset_name>"""
     import sys
-    from agent_os.agents.implementations import Coder, Conversational, General
+    from graxia_tool.agents.implementations import Coder, Conversational, General
 
     if len(sys.argv) < 2:
-        print("Usage: python -m agent_os.eval.regression <dataset_name>")
+        print("Usage: python -m graxia_tool.eval.regression <dataset_name>")
         print(f"Available: {', '.join(list_datasets())}")
         sys.exit(1)
 

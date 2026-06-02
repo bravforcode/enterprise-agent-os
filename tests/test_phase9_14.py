@@ -5,13 +5,13 @@ import json
 from pathlib import Path
 from datetime import datetime
 
-from agent_os.optimization import (
+from graxia_tool.optimization import (
     CostOptimizer,
     OptimizationConfig,
     BatchProcessor,
     TokenBudgetManager,
 )
-from agent_os.eval.datasets import (
+from graxia_tool.eval.datasets import (
     ALL_DATASETS,
     CODE_GENERATION,
     QA,
@@ -22,17 +22,17 @@ from agent_os.eval.datasets import (
     list_datasets,
     get_total_case_count,
 )
-from agent_os.eval.regression import (
+from graxia_tool.eval.regression import (
     RegressionHarness,
     RegressionResult,
     RegressionReport,
 )
-from agent_os.pipeline import (
+from graxia_tool.pipeline import (
     EndToEndPipeline,
     PipelineRequest,
     PipelineResponse,
 )
-from agent_os.observability.prometheus import (
+from graxia_tool.observability.prometheus import (
     record_run,
     record_agent,
     record_pattern,

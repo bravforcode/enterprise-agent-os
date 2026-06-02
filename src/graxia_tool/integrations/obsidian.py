@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-logger = logging.getLogger("agent_os.obsidian")
+logger = logging.getLogger("graxia_tool.obsidian")
 
 DEFAULT_VAULT = Path(r"C:\Users\menum\Documents\ObsidianVault\Second Brain")
 

@@ -3,8 +3,8 @@ import pytest
 import uuid
 import math
 from datetime import datetime, timedelta
-from agent_os.memory.layers import MemoryLayer, LAYER_CONFIG
-from agent_os.memory.memory_os import MemoryOS
+from graxia_tool.memory.layers import MemoryLayer, LAYER_CONFIG
+from graxia_tool.memory.memory_os import MemoryOS
 
 
 class TestMemoryLayers:

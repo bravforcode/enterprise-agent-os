@@ -1,8 +1,8 @@
 """Enterprise Agent OS — Phase 5 tests."""
 import pytest
 import asyncio
-from agent_os.agents.base import BaseSubAgent, SubAgentResult
-from agent_os.agents.implementations import (
+from graxia_tool.agents.base import BaseSubAgent, SubAgentResult
+from graxia_tool.agents.implementations import (
     Coder, Debugger, Tester, Reviewer, Deployer,
     Documenter, Researcher, DataEngineer, Sysadmin,
     Conversational, General, Validator, Planner, Architect, SecurityAuditor,

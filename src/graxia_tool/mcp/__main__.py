@@ -1,4 +1,4 @@
-"""Entry point: python -m agent_os.mcp"""
+"""Entry point: python -m graxia_tool.mcp"""
 import sys
 from . import main
 

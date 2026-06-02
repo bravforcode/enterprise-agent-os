@@ -11,10 +11,10 @@ Architecture:
 
 Usage:
     # stdio (local Claude Desktop / Cursor)
-    python -m agent_os.mcp.server
+    python -m graxia_tool.mcp.server
 
     # SSE (remote clients)
-    python -m agent_os.mcp.server --transport sse --port 8765
+    python -m graxia_tool.mcp.server --transport sse --port 8765
 """
 from __future__ import annotations
 
@@ -29,7 +29,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, List, Optional
 
-logger = logging.getLogger("agent_os.mcp")
+logger = logging.getLogger("graxia_tool.mcp")
 
 # ----------------------------------------------------------------------------
 # Tool registry
@@ -772,8 +772,8 @@ def build_default_registry() -> ToolRegistry:
 class MCPServer:
     """Minimal MCP server implementation using stdio or SSE."""
 
-    SERVER_NAME = "agent-os"
-    SERVER_VERSION = "0.1.0"
+    SERVER_NAME = "graxia_tool"
+    SERVER_VERSION = "0.2.0"
     PROTOCOL_VERSION = "2024-11-05"
 
     def __init__(self, registry: Optional[ToolRegistry] = None):
@@ -837,39 +837,27 @@ class MCPServer:
     async def run_stdio(self) -> None:
         """Run the server over stdio (JSON-RPC newline-delimited)."""
         logger.info("MCP server starting on stdio")
-        loop = asyncio.get_event_loop()
-        reader = asyncio.StreamReader()
-        protocol = asyncio.StreamReaderProtocol(reader)
-        await loop.connect_read_pipe(lambda: protocol, sys.stdin)
-
-        writer_transport, writer_protocol = await loop.connect_write_pipe(asyncio.StreamReaderProtocol, sys.stdout)
-        writer = asyncio.StreamWriter(writer_transport, writer_protocol, reader, loop)
-
-        while True:
-            try:
-                line = await reader.readline()
-                if not line:
-                    break
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    req = json.loads(line)
-                except json.JSONDecodeError as e:
-                    err = make_error(None, -32700, f"Parse error: {e}")
-                    writer.write((json.dumps(err) + "\n").encode("utf-8"))
-                    await writer.drain()
-                    continue
-
-                response = await self.handle_request(req)
-                if response is not None:
-                    writer.write((json.dumps(response) + "\n").encode("utf-8"))
-                    await writer.drain()
-            except (asyncio.IncompleteReadError, ConnectionError):
-                break
-            except Exception:
-                logger.exception("stdio loop error")
+        # Read all of stdin first, then process. This works for testing and
+        # for short-lived CLI invocations. For long-running daemons, use SSE.
+        try:
+            data = sys.stdin.read()
+        except Exception as e:
+            logger.error("stdin read failed: %s", e)
+            return
+        for line in data.splitlines():
+            line = line.strip()
+            if not line:
                 continue
+            try:
+                req = json.loads(line)
+            except json.JSONDecodeError as e:
+                sys.stdout.write(json.dumps(make_error(None, -32700, f"Parse error: {e}")) + "\n")
+                sys.stdout.flush()
+                continue
+            response = await self.handle_request(req)
+            if response is not None:
+                sys.stdout.write(json.dumps(response) + "\n")
+                sys.stdout.flush()
 
     # ------------------------------------------------------------------------
     # SSE / HTTP transport (optional)

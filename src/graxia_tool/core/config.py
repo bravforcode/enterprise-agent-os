@@ -22,7 +22,7 @@ class Settings(BaseSettings):
 
     # Database (PostgreSQL)
     database_url: str = Field(
-        default="postgresql+asyncpg://agent:agent@localhost:5432/agent_os",
+        default="postgresql+asyncpg://agent:agent@localhost:5432/graxia_tool",
         description="Async PostgreSQL connection string",
     )
     database_pool_size: int = 20

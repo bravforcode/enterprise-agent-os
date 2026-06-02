@@ -51,8 +51,11 @@ def to_openai_tools(tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return out
 
 
-def to_gemini_tools(tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Convert MCP tool definitions to Gemini function_declarations format."""
+def to_gemini_tools(tools: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Convert MCP tool definitions to Gemini function_declarations format.
+
+    Returns: {"function_declarations": [...]} — a single dict, not a list.
+    """
     out: List[Dict[str, Any]] = []
     for tool in tools:
         out.append({
@@ -60,7 +63,7 @@ def to_gemini_tools(tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             "description": tool.get("description", ""),
             "parameters": tool.get("inputSchema", {"type": "object", "properties": {}}),
         })
-    return [{"function_declarations": out}]
+    return {"function_declarations": out}
 
 
 def to_generic_tools(tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:

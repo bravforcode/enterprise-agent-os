@@ -1,12 +1,12 @@
 """Enterprise Agent OS — Phase 1 tests."""
 import pytest
-from agent_os.core.intent_router import (
+from graxia_tool.core.intent_router import (
     classify_intent, Intent, Domain, RiskLevel, _keyword_classify,
 )
-from agent_os.tools.registry import ToolRegistry, ToolDefinition
-from agent_os.skills.registry import SkillRegistry, SkillDefinition
-from agent_os.core.output_validator import OutputValidator
-from agent_os.core.approval_flow import ApprovalFlow, ApprovalStatus
+from graxia_tool.tools.registry import ToolRegistry, ToolDefinition
+from graxia_tool.skills.registry import SkillRegistry, SkillDefinition
+from graxia_tool.core.output_validator import OutputValidator
+from graxia_tool.core.approval_flow import ApprovalFlow, ApprovalStatus
 
 
 # --- Intent Router Tests ---

@@ -1,15 +1,15 @@
 """Enterprise Agent OS — Phase 6-7 tests."""
 import pytest
 import asyncio
-from agent_os.governance import (
+from graxia_tool.governance import (
     PolicyEngine, Policy, PolicyDecision, AuditEntry,
 )
-from agent_os.eval.framework import (
+from graxia_tool.eval.framework import (
     EvalRunner, EvalCase, EvalReport,
     exact_match, contains_match, keyword_match, similarity_match,
 )
-from agent_os.observability import MetricsCollector, AlertManager, Tracer
-from agent_os.guards import (
+from graxia_tool.observability import MetricsCollector, AlertManager, Tracer
+from graxia_tool.guards import (
     check_injection, check_harmful, check_length,
     check_pii, redact_pii, check_input, check_output,
 )

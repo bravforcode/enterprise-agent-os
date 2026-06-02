@@ -1,11 +1,11 @@
 """Enterprise Agent OS — Phase 2 tests."""
 import pytest
-from agent_os.core.model_router import (
+from graxia_tool.core.model_router import (
     ModelRouter, ModelTier, detect_complexity, MODEL_CATALOG
 )
-from agent_os.core.context_compressor import ContextCompressor
-from agent_os.core.token_budget import TokenBudgetManager
-from agent_os.core.prompt_cache import PromptCache
+from graxia_tool.core.context_compressor import ContextCompressor
+from graxia_tool.core.token_budget import TokenBudgetManager
+from graxia_tool.core.prompt_cache import PromptCache
 
 
 # --- Model Router Tests ---

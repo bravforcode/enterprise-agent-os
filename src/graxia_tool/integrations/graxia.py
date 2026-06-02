@@ -17,7 +17,7 @@ import os
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
-logger = logging.getLogger("agent_os.graxia")
+logger = logging.getLogger("graxia_tool.graxia")
 
 
 @dataclass
@@ -123,7 +123,7 @@ class GraxiaBridge:
 
     async def share_cost_report(self) -> Dict[str, Any]:
         """Share Agent OS cost report with Graxia dashboard."""
-        from ..cost_engine import CostEngine
+        from ..cost_engine.engine import CostEngine
         engine = CostEngine()
         report = await engine.report(period="day")
         return report

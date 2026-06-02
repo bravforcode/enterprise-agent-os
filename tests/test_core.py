@@ -1,6 +1,6 @@
 """Enterprise Agent OS — Basic tests."""
 import pytest
-from agent_os.core.config import Settings
+from graxia_tool.core.config import Settings
 
 
 def test_settings_defaults():
@@ -28,7 +28,7 @@ def test_settings_env_prefix():
 
 def test_risk_levels():
     """Risk levels are defined."""
-    from agent_os.core.models import RiskLevel
+    from graxia_tool.core.models import RiskLevel
     assert RiskLevel.LOW == "low"
     assert RiskLevel.HIGH == "high"
     assert RiskLevel.CRITICAL == "critical"
@@ -36,7 +36,7 @@ def test_risk_levels():
 
 def test_run_statuses():
     """Run statuses are defined."""
-    from agent_os.core.models import RunStatus
+    from graxia_tool.core.models import RunStatus
     assert RunStatus.PENDING == "pending"
     assert RunStatus.RUNNING == "running"
     assert RunStatus.SUCCESS == "success"
