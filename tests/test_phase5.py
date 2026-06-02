@@ -12,7 +12,7 @@ from graxia_tool.agents.implementations import (
 
 class TestAgentRegistry:
     def test_all_agents_registered(self):
-        assert len(AGENT_REGISTRY) == 15
+        assert len(AGENT_REGISTRY) == 18
 
     def test_expected_agents(self):
         expected = {
@@ -20,6 +20,7 @@ class TestAgentRegistry:
             "documenter", "researcher", "data_engineer", "sysadmin",
             "conversational", "general", "validator", "planner",
             "architect", "security_auditor",
+            "database_admin", "network_engineer", "frontend_designer",
         }
         actual = set(AGENT_REGISTRY.keys())
         assert actual == expected
@@ -35,7 +36,7 @@ class TestAgentRegistry:
 
     def test_list_agents(self):
         agents = list_agents()
-        assert len(agents) == 15
+        assert len(agents) == 18
         assert "coder" in agents
 
 

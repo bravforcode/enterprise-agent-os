@@ -1,6 +1,6 @@
 """Enterprise Agent OS — Sub-Agent Implementations.
 
-15 specialized sub-agents:
+18 specialized sub-agents:
 1. Coder — write/implement code
 2. Debugger — debug issues
 3. Tester — write tests
@@ -16,6 +16,9 @@
 13. Planner — task planning
 14. Architect — system design
 15. SecurityAuditor — security analysis
+16. DatabaseAdmin — schema, queries, migrations
+17. NetworkEngineer — DNS, load balancing, security
+18. FrontendDesigner — UI/UX, components, accessibility
 """
 from __future__ import annotations
 from typing import Any, Optional
@@ -296,6 +299,78 @@ class SecurityAuditor(BaseSubAgent):
         return SubAgentResult(success=True, output={"audit": f"Auditing: {query}"})
 
 
+class DatabaseAdmin(BaseSubAgent):
+    """Database administration agent — schema design, queries, migrations, optimization."""
+    name = "database_admin"
+    description = "Database schema design, query optimization, migrations"
+    required_skills = ["test-driven-development"]
+    required_tools = ["file_read", "file_write", "shell_exec"]
+    max_tokens = 4000
+
+    async def execute(self, query: str, context: Optional[dict] = None) -> SubAgentResult:
+        if self.llm_func:
+            prompt = (
+                f"Database administration task: {query}\n\n"
+                "Provide: schema design, SQL queries, migration scripts, "
+                "index recommendations, and performance analysis."
+            )
+            response = await self.llm_func(prompt)
+            return SubAgentResult(
+                success=True,
+                output={"sql": response, "migrations": [], "indexes": []},
+                tokens_used=len(prompt) // 4 + len(response) // 4,
+            )
+        return SubAgentResult(success=True, output={"sql": f"-- TODO: {query}"})
+
+
+class NetworkEngineer(BaseSubAgent):
+    """Network engineering agent — DNS, load balancing, firewalls, CDN."""
+    name = "network_engineer"
+    description = "Network design, DNS, load balancing, security"
+    required_skills = []
+    required_tools = ["file_read", "shell_exec"]
+    max_tokens = 4000
+
+    async def execute(self, query: str, context: Optional[dict] = None) -> SubAgentResult:
+        if self.llm_func:
+            prompt = (
+                f"Network engineering task: {query}\n\n"
+                "Provide: network topology, DNS config, load balancer setup, "
+                "firewall rules, CDN configuration, and security recommendations."
+            )
+            response = await self.llm_func(prompt)
+            return SubAgentResult(
+                success=True,
+                output={"config": response, "topology": "", "recommendations": []},
+                tokens_used=len(prompt) // 4 + len(response) // 4,
+            )
+        return SubAgentResult(success=True, output={"config": f"# TODO: {query}"})
+
+
+class FrontendDesigner(BaseSubAgent):
+    """Frontend design agent — UI/UX, components, accessibility, responsive design."""
+    name = "frontend_designer"
+    description = "UI/UX design, components, accessibility, responsive layouts"
+    required_skills = []
+    required_tools = ["file_read", "file_write"]
+    max_tokens = 4000
+
+    async def execute(self, query: str, context: Optional[dict] = None) -> SubAgentResult:
+        if self.llm_func:
+            prompt = (
+                f"Frontend design task: {query}\n\n"
+                "Provide: component design, HTML/CSS/JS code, accessibility (ARIA) "
+                "annotations, responsive breakpoints, and UX considerations."
+            )
+            response = await self.llm_func(prompt)
+            return SubAgentResult(
+                success=True,
+                output={"code": response, "components": [], "a11y_notes": []},
+                tokens_used=len(prompt) // 4 + len(response) // 4,
+            )
+        return SubAgentResult(success=True, output={"code": f"<!-- TODO: {query} -->"})
+
+
 # Registry
 AGENT_REGISTRY: dict[str, type[BaseSubAgent]] = {
     "coder": Coder,
@@ -313,6 +388,9 @@ AGENT_REGISTRY: dict[str, type[BaseSubAgent]] = {
     "planner": Planner,
     "architect": Architect,
     "security_auditor": SecurityAuditor,
+    "database_admin": DatabaseAdmin,
+    "network_engineer": NetworkEngineer,
+    "frontend_designer": FrontendDesigner,
 }
 
 

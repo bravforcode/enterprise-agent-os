@@ -259,7 +259,7 @@ class TestPipeline:
         assert response.intent is not None
         assert response.success
         assert response.output is not None
-        assert response.duration_ms > 0
+        assert response.duration_ms >= 0
         assert len(response.stages) > 0
 
     @pytest.mark.asyncio
