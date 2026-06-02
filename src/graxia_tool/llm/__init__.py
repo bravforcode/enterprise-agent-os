@@ -1,10 +1,15 @@
-"""Real LLM client for Anthropic and OpenAI APIs.
+"""LLM clients for Graxia Tool.
 
-Provides:
-- AnthropicClient: claude-3-5-sonnet, claude-3-haiku, etc.
-- OpenAIClient: gpt-4, gpt-3.5-turbo, etc.
-- MockLLMClient: deterministic mock for testing
-- LLMFactory: route to correct client based on model name
+Supports:
+- OllamaClient: Local LLM via Ollama (no API key needed, free, offline)
+- AnthropicClient: Claude models via Anthropic API (requires ANTHROPIC_API_KEY)
+- OpenAIClient: GPT models via OpenAI API (requires OPENAI_API_KEY)
+- MockLLMClient: Deterministic mock for testing only
+
+Default priority (no env vars set):
+1. Ollama (local, free, no key) — RECOMMENDED for zero-setup
+2. Anthropic (if ANTHROPIC_API_KEY set)
+3. OpenAI (if OPENAI_API_KEY set)
 """
 from __future__ import annotations
 
@@ -18,7 +23,7 @@ from typing import Any, Optional
 import httpx
 
 
-# Cost per 1K tokens (input, output)
+# Cost per 1K tokens (input, output) — 0 for local models
 MODEL_COSTS = {
     # Anthropic
     "claude-3-5-sonnet-20241022": (0.003, 0.015),
@@ -32,7 +37,20 @@ MODEL_COSTS = {
     "gpt-3.5-turbo": (0.0005, 0.0015),
     "gpt-4o": (0.0025, 0.01),
     "gpt-4o-mini": (0.00015, 0.0006),
+    # Ollama — free, local (0 cost)
+    "llama3.2": (0.0, 0.0),
+    "llama3.1": (0.0, 0.0),
+    "qwen2.5": (0.0, 0.0),
+    "gemma2": (0.0, 0.0),
+    "phi3": (0.0, 0.0),
+    "mistral": (0.0, 0.0),
+    "codellama": (0.0, 0.0),
+    "deepseek-coder": (0.0, 0.0),
 }
+
+
+# Default Ollama model — small, fast, good enough
+DEFAULT_OLLAMA_MODEL = "llama3.2"
 
 
 @dataclass
@@ -70,7 +88,7 @@ class LLMClient(ABC):
 
 
 class MockLLMClient(LLMClient):
-    """Deterministic mock for testing."""
+    """Deterministic mock for testing — DO NOT USE IN PRODUCTION."""
 
     def __init__(self, model: str = "mock-model"):
         self.model = model
@@ -82,17 +100,12 @@ class MockLLMClient(LLMClient):
         max_tokens: int = 1024,
         temperature: float = 0.7,
     ) -> LLMResponse:
-        """Return mock response."""
         start = time.time()
-        # Simulate processing
         await asyncio.sleep(0.01)
         duration_ms = int((time.time() - start) * 1000)
-
-        # Mock content based on prompt
         content = f"[Mock response to: {prompt[:100]}...]"
         tokens_in = len(prompt.split())
         tokens_out = len(content.split())
-
         return LLMResponse(
             content=content,
             model=self.model,
@@ -102,6 +115,132 @@ class MockLLMClient(LLMClient):
             duration_ms=duration_ms,
             metadata={"mock": True},
         )
+
+
+class OllamaClient(LLMClient):
+    """Ollama local LLM client — FREE, no API key, runs offline.
+
+    Requires Ollama installed and running: https://ollama.com
+    Default: http://localhost:11434
+    """
+
+    BASE_URL = "http://localhost:11434"
+
+    def __init__(
+        self,
+        base_url: Optional[str] = None,
+        default_model: Optional[str] = None,
+        timeout: float = 120.0,
+    ):
+        self.base_url = (base_url or os.getenv("OLLAMA_HOST", self.BASE_URL)).rstrip("/")
+        self.default_model = default_model or os.getenv("OLLAMA_MODEL", DEFAULT_OLLAMA_MODEL)
+        self._client = httpx.AsyncClient(
+            base_url=self.base_url,
+            timeout=timeout,
+        )
+        self._available: Optional[bool] = None
+
+    async def is_available(self) -> bool:
+        """Check if Ollama is running and accessible."""
+        if self._available is not None:
+            return self._available
+        try:
+            resp = await self._client.get("/api/tags", timeout=2.0)
+            self._available = resp.status_code == 200
+        except Exception:
+            self._available = False
+        return self._available
+
+    async def list_models(self) -> list[str]:
+        """List available models on the Ollama server."""
+        try:
+            resp = await self._client.get("/api/tags")
+            resp.raise_for_status()
+            data = resp.json()
+            return [m["name"] for m in data.get("models", [])]
+        except Exception:
+            return []
+
+    async def ensure_model(self, model: Optional[str] = None) -> bool:
+        """Ensure the specified model is available, pull if needed."""
+        model = model or self.default_model
+        models = await self.list_models()
+        # Check if model exists (with or without tag)
+        for m in models:
+            if m == model or m.startswith(f"{model}:"):
+                return True
+        # Pull the model
+        try:
+            resp = await self._client.post(
+                "/api/pull",
+                json={"name": model, "stream": False},
+                timeout=600.0,
+            )
+            resp.raise_for_status()
+            return True
+        except Exception:
+            return False
+
+    async def complete(
+        self,
+        prompt: str,
+        system: Optional[str] = None,
+        max_tokens: int = 1024,
+        temperature: float = 0.7,
+        model: Optional[str] = None,
+    ) -> LLMResponse:
+        """Call Ollama generate API."""
+        start = time.time()
+        model = model or self.default_model
+
+        payload = {
+            "model": model,
+            "prompt": prompt,
+            "stream": False,
+            "options": {
+                "num_predict": max_tokens,
+                "temperature": temperature,
+            },
+        }
+        if system:
+            payload["system"] = system
+
+        try:
+            resp = await self._client.post("/api/generate", json=payload)
+            resp.raise_for_status()
+            data = resp.json()
+        except httpx.HTTPStatusError as e:
+            error_body = e.response.text
+            raise RuntimeError(f"Ollama API error {e.response.status_code}: {error_body}")
+        except httpx.ConnectError:
+            raise RuntimeError(
+                f"Cannot connect to Ollama at {self.base_url}. "
+                f"Install from https://ollama.com and run: ollama pull {model}"
+            )
+
+        duration_ms = int((time.time() - start) * 1000)
+        content = data.get("response", "")
+
+        # Ollama returns prompt_eval_count and eval_count
+        tokens_in = data.get("prompt_eval_count", len(prompt.split()))
+        tokens_out = data.get("eval_count", len(content.split()))
+        cost = self.estimate_cost(model, tokens_in, tokens_out)
+
+        return LLMResponse(
+            content=content,
+            model=model,
+            tokens_in=tokens_in,
+            tokens_out=tokens_out,
+            cost_usd=cost,
+            duration_ms=duration_ms,
+            metadata={
+                "total_duration": data.get("total_duration"),
+                "load_duration": data.get("load_duration"),
+            },
+        )
+
+    async def close(self):
+        await self._client.aclose()
 
 
 class AnthropicClient(LLMClient):
@@ -133,7 +272,6 @@ class AnthropicClient(LLMClient):
         temperature: float = 0.7,
         model: Optional[str] = None,
     ) -> LLMResponse:
-        """Call Anthropic Messages API."""
         start = time.time()
         model = model or self.default_model
 
@@ -202,7 +340,6 @@ class OpenAIClient(LLMClient):
         temperature: float = 0.7,
         model: Optional[str] = None,
     ) -> LLMResponse:
-        """Call OpenAI Chat Completions API."""
         start = time.time()
         model = model or self.default_model
 
@@ -247,20 +384,54 @@ class OpenAIClient(LLMClient):
         await self._client.aclose()
 
 
-def get_llm_client(model: str = "mock") -> LLMClient:
-    """Factory: get appropriate LLM client based on model name.
+def get_llm_client(model: str = "auto") -> LLMClient:
+    """Factory: get appropriate LLM client.
 
-    Returns:
-    - AnthropicClient for claude-* models
-    - OpenAIClient for gpt-* models
-    - MockLLMClient for anything else or when no API keys set
+    Priority (default, no env vars):
+    1. Ollama (local, free, no key) — RECOMMENDED
+    2. Anthropic (if ANTHROPIC_API_KEY set)
+    3. OpenAI (if OPENAI_API_KEY set)
+
+    Args:
+        model: "auto" (default), or specific model name
     """
+    if model == "auto" or model == "ollama" or model.startswith(("llama", "qwen", "gemma", "phi", "mistral", "codellama", "deepseek")):
+        # Try Ollama first (no API key, local)
+        return OllamaClient()
+
     if model.startswith("claude-"):
         if os.getenv("ANTHROPIC_API_KEY"):
             return AnthropicClient(default_model=model)
-    elif model.startswith("gpt-"):
+
+    if model.startswith("gpt-"):
         if os.getenv("OPENAI_API_KEY"):
             return OpenAIClient(default_model=model)
 
-    # Fallback to mock
-    return MockLLMClient(model=model)
+    # Fallback: try Ollama (works without API key)
+    return OllamaClient()
+
+
+async def get_llm_client_async() -> LLMClient:
+    """Async factory: detect best available LLM at runtime.
+
+    Priority:
+    1. Ollama if running (local, free, no key)
+    2. Anthropic if ANTHROPIC_API_KEY set
+    3. OpenAI if OPENAI_API_KEY set
+    4. Ollama anyway (will fail with helpful error if not running)
+    """
+    # Try Ollama first
+    ollama = OllamaClient()
+    if await ollama.is_available():
+        return ollama
+    await ollama.close()
+
+    # Try API clients
+    if os.getenv("ANTHROPIC_API_KEY"):
+        return AnthropicClient()
+
+    if os.getenv("OPENAI_API_KEY"):
+        return OpenAIClient()
+
+    # Fallback: return Ollama anyway (will give helpful error)
+    return OllamaClient()

@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from graxia_tool.llm import (
     LLMClient, LLMResponse, MockLLMClient,
-    AnthropicClient, OpenAIClient, get_llm_client,
+    AnthropicClient, OpenAIClient, OllamaClient, get_llm_client,
     MODEL_COSTS,
 )
 
@@ -81,11 +81,11 @@ class TestMockClient:
 class TestFactory:
     """Tests for LLM factory."""
 
-    def test_mock_default(self):
-        """Should return mock when no keys set."""
+    def test_ollama_default(self):
+        """Should return Ollama when no keys set (no API key needed)."""
         with patch.dict(os.environ, {}, clear=True):
             client = get_llm_client("anything")
-            assert isinstance(client, MockLLMClient)
+            assert isinstance(client, OllamaClient)
 
     def test_anthropic_with_key(self):
         """Should return AnthropicClient when key set."""
@@ -100,16 +100,16 @@ class TestFactory:
             assert isinstance(client, OpenAIClient)
 
     def test_anthropic_no_key_fallback(self):
-        """Should fallback to mock if no key."""
+        """Should fallback to Ollama if no key (no API key needed)."""
         with patch.dict(os.environ, {}, clear=True):
             client = get_llm_client("claude-3-5-sonnet-20241022")
-            assert isinstance(client, MockLLMClient)
+            assert isinstance(client, OllamaClient)
 
     def test_openai_no_key_fallback(self):
-        """Should fallback to mock if no key."""
+        """Should fallback to Ollama if no key (no API key needed)."""
         with patch.dict(os.environ, {}, clear=True):
             client = get_llm_client("gpt-4")
-            assert isinstance(client, MockLLMClient)
+            assert isinstance(client, OllamaClient)
 
 
 # --- Anthropic Client Tests (mocked HTTP) ---

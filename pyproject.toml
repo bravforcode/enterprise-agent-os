@@ -37,7 +37,24 @@ dependencies = [
     "numpy>=1.26.0",
 ]
 
+[project.scripts]
+# Console scripts — install these with `pip install graxia-tool`
+graxia = "graxia_tool.__main__:main"
+graxia-mcp = "graxia_tool.__main__:main"
+graxia-install = "graxia_tool.installer:install"
+
+[project.entry-points.console_scripts]
+graxia-web = "graxia_tool.__main__:main"
+
 [project.optional-dependencies]
+web = [
+    # Web UI extras (FastAPI already in core deps)
+    "jinja2>=3.1.0",
+    "python-multipart>=0.0.18",
+]
+ollama = [
+    # Ollama helper (httpx already in core deps)
+]
 dev = [
     "pytest>=8.3.0",
     "pytest-asyncio>=0.24.0",
