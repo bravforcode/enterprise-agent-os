@@ -168,6 +168,8 @@ KEYWORD_MCP_TOOLS: list[tuple[str, list[str]]] = [
 class AutoRouter:
     """Analyzes user prompt and auto-selects skills, RAG, MCP tools, subagents.
 
+    Optionally integrates with SelfLearner for outcome-based routing improvement.
+
     Usage:
         router = AutoRouter()
         decision = router.route("Fix the bug in auth.py that causes 500 errors")
@@ -176,9 +178,10 @@ class AutoRouter:
         print(decision.rag_technique)  # "corrective_rag"
     """
 
-    def __init__(self) -> None:
+    def __init__(self, self_learner: Any | None = None) -> None:
         self._route_count: int = 0
         self._route_times_ms: list[float] = []
+        self._self_learner = self_learner
 
     def route(
         self,
@@ -205,11 +208,37 @@ class AutoRouter:
         # 2. Skill selection
         skills = self._select_skills(intent, prompt)
 
+        # 2b. Merge in learned skill suggestions
+        if self._self_learner is not None:
+            try:
+                learner_task = {"intent": intent.value, "domain": domain.value}
+                learned_skills = self._self_learner.suggest_skills(learner_task)
+                for s in learned_skills:
+                    if s not in skills:
+                        skills.append(s)
+                skills.sort()
+            except Exception:
+                pass
+
         # 3. RAG technique selection
         rag_technique, rag_query = self._select_rag(prompt, intent)
 
-        # 4. Agent selection
+        # 4. Agent selection (with optional learner override)
         agent_type = INTENT_AGENT_MAP.get(intent, "general")
+
+        # 4b. Check SelfLearner for learned agent preference
+        if self._self_learner is not None:
+            try:
+                learner_task = {
+                    "intent": intent.value,
+                    "domain": domain.value,
+                }
+                learned_agent = self._self_learner.suggest_agent(learner_task)
+                if learned_agent is not None:
+                    agent_type = learned_agent
+                    logger.debug("learner_override_agent", agent=learned_agent)
+            except Exception:
+                pass  # Learner failure must not break routing
 
         # 5. Model tier selection
         model_tier = detect_complexity(prompt).value

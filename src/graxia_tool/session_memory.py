@@ -114,18 +114,38 @@ class SessionMemory:
         mem = SessionMemory()
         mem.remember_task(TaskRecord(prompt="Fix auth bug", success=True))
         results = mem.recall("auth bug")
+
+    With vault sync:
+        mem = SessionMemory(vault_sync=True)
+        # Tasks auto-sync to Obsidian vault after storage
     """
 
-    def __init__(self, db_path: Optional[str] = None) -> None:
+    def __init__(
+        self,
+        db_path: Optional[str] = None,
+        vault_sync: bool = False,
+        vault_path: Optional[str] = None,
+    ) -> None:
         """Initialize with optional SQLite path.
 
         Args:
             db_path: Path to SQLite database. None = in-memory.
+            vault_sync: Enable automatic sync to Obsidian vault.
+            vault_path: Override vault path for sync.
         """
         self._db_path = db_path
+        self._vault_sync_enabled = vault_sync
+        self._vault_sync = None
         self._conn: Optional[sqlite3.Connection] = None
         self._connect()
         self._init_schema()
+
+        if vault_sync:
+            try:
+                from .memory.vault_sync import VaultMemorySync
+                self._vault_sync = VaultMemorySync(vault_path=vault_path)
+            except Exception:
+                self._vault_sync_enabled = False
 
     def _connect(self) -> None:
         """Open SQLite connection."""
@@ -225,6 +245,14 @@ class SessionMemory:
             ),
         )
         self._conn.commit()
+
+        # Auto-sync to vault if enabled
+        if self._vault_sync_enabled and self._vault_sync is not None:
+            try:
+                self._vault_sync.sync_task_record(task)
+            except Exception:
+                pass  # Non-critical: vault sync failure doesn't break memory
+
         return task.task_id
 
     # ── Codebase knowledge ───────────────────────────────────────────────

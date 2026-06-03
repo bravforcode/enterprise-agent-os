@@ -25,6 +25,8 @@ from .auto_router import AutoRouter, RoutingDecision
 from .session_memory import SessionMemory, TaskRecord
 from .context_cache import ContextCache
 from .skills.registry import SkillRegistry, SkillDefinition
+from .learning.self_learner import SelfLearner
+from .optimization.token_optimizer import TokenOptimizer, get_optimizer
 from .multi_agent import (
     PatternType,
     PipelineCoordinator,
@@ -117,6 +119,8 @@ class EndToEndPipeline:
         session_memory: SessionMemory | None = None,
         context_cache: ContextCache | None = None,
         skill_registry: SkillRegistry | None = None,
+        token_optimizer: TokenOptimizer | None = None,
+        self_learner: SelfLearner | None = None,
         max_retries: int = 2,
     ) -> None:
         self.orchestrator = orchestrator or Orchestrator()
@@ -124,10 +128,12 @@ class EndToEndPipeline:
         self.run_logger = run_logger
         self.policy_engine = policy_engine or PolicyEngine()
         self.agents = agents or AGENT_REGISTRY
-        self.auto_router = AutoRouter()
+        self.self_learner = self_learner
+        self.auto_router = AutoRouter(self_learner=self_learner)
         self.session_memory = session_memory or SessionMemory()
         self.context_cache = context_cache or ContextCache()
         self.skill_registry = skill_registry or SkillRegistry()
+        self.token_optimizer = token_optimizer or get_optimizer()
         self.max_retries = max_retries
 
     async def process(self, request: PipelineRequest) -> PipelineResponse:
@@ -253,11 +259,12 @@ class EndToEndPipeline:
                 )
             _log_stage("route", "pass", agent=agent_name)
 
-            # Build enriched context with skill content
+            # Build enriched context with skill content and token optimizer
             enriched_context = {
                 **request.context,
                 "skills_context": skills_context,
                 "routing_decision": request.routing_decision,
+                "token_optimizer": self.token_optimizer,
             }
 
             # Execute with auto-healing
@@ -271,6 +278,21 @@ class EndToEndPipeline:
             )
 
             if not agent_result.success:
+                # Record failure for learning
+                if self.self_learner is not None:
+                    try:
+                        self.self_learner.record_outcome(
+                            task={
+                                "intent": routing_decision.intent,
+                                "domain": intent.domain.value,
+                            },
+                            success=False,
+                            agent_used=agent_name,
+                            duration_ms=agent_result.duration_ms,
+                            skills_used=skills_loaded,
+                        )
+                    except Exception:
+                        pass
                 return self._fail_response(
                     request_id, start, stages,
                     agent_result.error or "Agent execution failed after healing",
@@ -325,6 +347,9 @@ class EndToEndPipeline:
             intent.intent.value, intent.domain.value, "success", duration / 1000
         )
 
+        # Collect token optimization stats
+        token_opt_stats = self.token_optimizer.get_savings_report()
+
         # ============================================================
         # Stage 7: Store in Session Memory + Context Cache
         # ============================================================
@@ -354,6 +379,24 @@ class EndToEndPipeline:
         except Exception as e:
             logger.warning("cache_store_failed", error=str(e))
 
+        # ============================================================
+        # Stage 8: Record outcome in SelfLearner
+        # ============================================================
+        if self.self_learner is not None:
+            try:
+                self.self_learner.record_outcome(
+                    task={
+                        "intent": routing_decision.intent,
+                        "domain": intent.domain.value,
+                    },
+                    success=True,
+                    agent_used=routing_decision.agent_type,
+                    duration_ms=duration,
+                    skills_used=skills_loaded,
+                )
+            except Exception as e:
+                logger.warning("self_learner_record_failed", error=str(e))
+
         return PipelineResponse(
             request_id=request_id,
             success=True,
@@ -366,7 +409,10 @@ class EndToEndPipeline:
             pattern_used=pattern_used,
             healing_attempts=healing_attempts if not request.pattern else 0,
             skills_loaded=skills_loaded,
-            metadata={"stages_count": len(stages)},
+            metadata={
+                "stages_count": len(stages),
+                "token_optimization": token_opt_stats,
+            },
         )
 
     # ── Skill Auto-Hydration ─────────────────────────────────────────

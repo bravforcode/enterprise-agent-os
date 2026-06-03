@@ -899,6 +899,251 @@ def build_default_registry() -> ToolRegistry:
         category="vault",
     ))
 
+    # Vault tools (from vault_tools module)
+    from .vault_tools import (
+        vault_link, vault_tag, vault_moc, vault_tasks,
+        vault_graph, vault_analytics,
+    )
+
+    # Vault auto-system tools (from auto_tools module)
+    from .auto_tools import (
+        vault_auto_link, vault_auto_tag, vault_auto_classify,
+        vault_auto_find_duplicates, vault_auto_check_consistency,
+        vault_auto_extract_tasks,
+    )
+
+    reg.register(Tool(
+        name="vault_link",
+        description="Create a wiki-link between two notes in the vault. Adds [[target]] to the source note.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "source": {"type": "string", "description": "Source note path (relative to vault)"},
+                "target": {"type": "string", "description": "Target note path or title"},
+                "link_text": {"type": "string", "description": "Optional display text for the link"},
+            },
+            "required": ["source", "target"],
+        },
+        handler=vault_link,
+        category="vault",
+    ))
+
+    reg.register(Tool(
+        name="vault_tag",
+        description="Add or remove tags from a note's frontmatter.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "Note path (relative to vault)"},
+                "tags": {"type": "array", "items": {"type": "string"}, "description": "Tags to add or remove"},
+                "action": {"type": "string", "enum": ["add", "remove"], "default": "add"},
+            },
+            "required": ["path", "tags"],
+        },
+        handler=vault_tag,
+        category="vault",
+    ))
+
+    reg.register(Tool(
+        name="vault_moc",
+        description="Generate a Map of Content (MOC) note for a topic by scanning the vault for related notes.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "topic": {"type": "string", "description": "Topic name for the MOC"},
+                "folder": {"type": "string", "default": "MOC", "description": "Folder to save the MOC in"},
+            },
+            "required": ["topic"],
+        },
+        handler=vault_moc,
+        category="vault",
+    ))
+
+    reg.register(Tool(
+        name="vault_tasks",
+        description="Extract all TODO/task items from vault notes (checks - [ ], TODO:, ACTION: patterns).",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "folder": {"type": "string", "description": "Optional folder to scan (default: whole vault)"},
+            },
+        },
+        handler=vault_tasks,
+        category="vault",
+    ))
+
+    reg.register(Tool(
+        name="vault_graph",
+        description="Get a note's relationship graph: outgoing links, backlinks, and related notes by shared tags.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "Note path (relative to vault)"},
+            },
+            "required": ["path"],
+        },
+        handler=vault_graph,
+        category="vault",
+    ))
+
+    reg.register(Tool(
+        name="vault_analytics",
+        description="Get vault-wide statistics: note count, links, orphans, tags, folder distribution.",
+        input_schema={"type": "object", "properties": {}},
+        handler=vault_analytics,
+        category="vault",
+    ))
+
+    reg.register(Tool(
+        name="vault_auto_link",
+        description="Auto-link orphaned notes by finding title-word overlaps. Use dry_run=true to preview without changes.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "dry_run": {"type": "boolean", "default": False},
+            },
+        },
+        handler=vault_auto_link,
+        category="vault",
+    ))
+
+    reg.register(Tool(
+        name="vault_auto_tag",
+        description="Auto-tag notes by analyzing content against tag rules. Use dry_run=true to preview without changes.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "dry_run": {"type": "boolean", "default": False},
+            },
+        },
+        handler=vault_auto_tag,
+        category="vault",
+    ))
+
+    reg.register(Tool(
+        name="vault_auto_classify",
+        description="Classify unclassified notes (00-Inbox, root) into PARA structure. Use dry_run=true to preview without changes.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "dry_run": {"type": "boolean", "default": False},
+                "max_files": {"type": "integer", "default": 100},
+            },
+        },
+        handler=vault_auto_classify,
+        category="vault",
+    ))
+
+    reg.register(Tool(
+        name="vault_auto_find_duplicates",
+        description="Find exact duplicate files (same content hash) and notes with similar names.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "dry_run": {"type": "boolean", "default": False},
+            },
+        },
+        handler=vault_auto_find_duplicates,
+        category="vault",
+    ))
+
+    reg.register(Tool(
+        name="vault_auto_check_consistency",
+        description="Check vault integrity: broken wiki-links, empty files, orphaned images, missing frontmatter.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "dry_run": {"type": "boolean", "default": False},
+            },
+        },
+        handler=vault_auto_check_consistency,
+        category="vault",
+    ))
+
+    reg.register(Tool(
+        name="vault_auto_extract_tasks",
+        description="Extract all TODOs, FIXMEs, checkboxes, and action items from vault notes.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "dry_run": {"type": "boolean", "default": False},
+            },
+        },
+        handler=vault_auto_extract_tasks,
+        category="vault",
+    ))
+
+    # Token optimization tools
+    from .token_tools import (
+        token_optimize, token_report, token_thai,
+    )
+
+    reg.register(Tool(
+        name="token_optimize",
+        description="Optimize a command or text for token savings using RTK, lean-ctx, or Thai Token Optimizer.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "description": "Command or text to optimize"},
+                "context": {
+                    "type": "string",
+                    "enum": ["command", "file_read", "thai", "general"],
+                    "default": "general",
+                    "description": "Optimization context: command (RTK prefix), file_read (lean-ctx), thai (TTO), general (auto-detect)",
+                },
+            },
+            "required": ["text"],
+        },
+        handler=token_optimize,
+        category="optimization",
+    ))
+
+    reg.register(Tool(
+        name="token_report",
+        description="Get token savings statistics from the optimization stack (RTK + lean-ctx + TTO).",
+        input_schema={"type": "object", "properties": {}},
+        handler=token_report,
+        category="optimization",
+    ))
+
+    reg.register(Tool(
+        name="token_thai",
+        description="Optimize Thai text for token savings using the Thai Token Optimizer.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "description": "Thai text to optimize"},
+            },
+            "required": ["text"],
+        },
+        handler=token_thai,
+        category="optimization",
+    ))
+
+    # Vault-memory sync tools
+    from .memory_tools import MEMORY_VAULT_TOOLS, memory_vault_sync_task
+
+    for tool_def in MEMORY_VAULT_TOOLS:
+        reg.register(Tool(
+            name=tool_def["name"],
+            description=tool_def["description"],
+            input_schema=tool_def["input_schema"],
+            handler=tool_def["handler"],
+            category=tool_def.get("category", "memory"),
+        ))
+
+    # Self-learning tools
+    from .learning_tools import LEARNING_TOOLS
+
+    for tool_def in LEARNING_TOOLS:
+        reg.register(Tool(
+            name=tool_def["name"],
+            description=tool_def["description"],
+            input_schema=tool_def["input_schema"],
+            handler=tool_def["handler"],
+            category=tool_def.get("category", "learning"),
+        ))
+
     # Auto-router, session memory, context cache
     reg.register(Tool(
         name="auto_route",
