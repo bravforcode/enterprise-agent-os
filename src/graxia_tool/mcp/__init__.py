@@ -1052,27 +1052,33 @@ class MCPServer:
     async def run_stdio(self) -> None:
         """Run the server over stdio (JSON-RPC newline-delimited)."""
         logger.info("MCP server starting on stdio")
-        # Read all of stdin first, then process. This works for testing and
-        # for short-lived CLI invocations. For long-running daemons, use SSE.
+        loop = asyncio.get_event_loop()
+        reader = asyncio.StreamReader()
+        transport, _ = await loop.connect_read_pipe(
+            lambda: asyncio.StreamReaderProtocol(reader), sys.stdin
+        )
         try:
-            data = sys.stdin.read()
-        except Exception as e:
-            logger.error("stdin read failed: %s", e)
-            return
-        for line in data.splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                req = json.loads(line)
-            except json.JSONDecodeError as e:
-                sys.stdout.write(json.dumps(make_error(None, -32700, f"Parse error: {e}")) + "\n")
-                sys.stdout.flush()
-                continue
-            response = await self.handle_request(req)
-            if response is not None:
-                sys.stdout.write(json.dumps(response) + "\n")
-                sys.stdout.flush()
+            while True:
+                line_bytes = await reader.readline()
+                if not line_bytes:
+                    break
+                line = line_bytes.decode("utf-8").strip()
+                if not line:
+                    continue
+                try:
+                    req = json.loads(line)
+                except json.JSONDecodeError as e:
+                    sys.stdout.write(json.dumps(make_error(None, -32700, f"Parse error: {e}")) + "\n")
+                    sys.stdout.flush()
+                    continue
+                response = await self.handle_request(req)
+                if response is not None:
+                    sys.stdout.write(json.dumps(response) + "\n")
+                    sys.stdout.flush()
+        except asyncio.CancelledError:
+            pass
+        finally:
+            transport.close()
 
     # ------------------------------------------------------------------------
     # SSE / HTTP transport (optional)
