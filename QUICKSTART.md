@@ -224,3 +224,41 @@ graxia_tool/
 | **Total** | **567** |
 
 All tests passing.
+
+## Publishing to PyPI
+
+```bash
+# Install build tools
+pip install build twine
+
+# Build source distribution and wheel
+python -m build
+
+# Upload to Test PyPI (first)
+twine upload --repository testpypi dist/*
+
+# Upload to production PyPI
+twine upload dist/*
+```
+
+### PyPI Configuration (`.pypirc`)
+
+Create `~/.pypirc` with your API tokens:
+
+```ini
+[distutils]
+index-servers =
+    pypi
+    testpypi
+
+[pypi]
+username = __token__
+password = pypi-xxxxxxxxxxxxxxxxxxxx
+
+[testpypi]
+repository = https://test.python.org/legacy/
+username = __token__
+password = pypi-xxxxxxxxxxxxxxxxxxxx
+```
+
+> **Security**: Use API tokens (not passwords). Store tokens in `~/.pypirc` with restricted file permissions (`chmod 600` on Linux/Mac).

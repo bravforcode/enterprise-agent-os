@@ -1,0 +1,8 @@
+include AGENTS.md
+include QUICKSTART.md
+include ZERO_SETUP.md
+include SUMMARY.md
+include LEAN-CTX.md
+include CLAUDE.md
+include pyproject.toml
+recursive-include src *.py

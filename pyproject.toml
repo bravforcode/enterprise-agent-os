@@ -3,10 +3,32 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "graxia_tool"
+name = "graxia-tool"
 version = "0.2.0"
 description = "Graxia Tool — Universal AI Agent OS with MCP server, cost engine, Obsidian + Graxia integration"
-requires-python = ">=3.11"
+readme = "QUICKSTART.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [
+    {name = "Graxia Team"},
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Information Technology",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+keywords = [
+    "ai", "agent", "llm", "mcp", "ollama",
+    "agent-os", "multi-agent", "rag", "zero-setup",
+    "claude", "codex", "gemini", "opencode",
+]
 dependencies = [
     # Web framework
     "fastapi>=0.115.0",
@@ -35,15 +57,19 @@ dependencies = [
     # Qdrant (vector DB)
     "qdrant-client>=1.12.0",
     "numpy>=1.26.0",
+    # Monitoring
+    "prometheus-client>=0.21.0",
 ]
 
+[project.urls]
+Homepage = "https://github.com/graxia-tool/graxia"
+Repository = "https://github.com/graxia-tool/graxia"
+Issues = "https://github.com/graxia-tool/graxia/issues"
+
 [project.scripts]
-# Console scripts — install these with `pip install graxia-tool`
 graxia = "graxia_tool.__main__:main"
 graxia-mcp = "graxia_tool.__main__:main"
 graxia-install = "graxia_tool.installer:install"
-
-[project.entry-points.console_scripts]
 graxia-web = "graxia_tool.__main__:main"
 
 [project.optional-dependencies]
@@ -55,6 +81,14 @@ web = [
 ollama = [
     # Ollama helper (httpx already in core deps)
 ]
+ml = [
+    # ONNX skill router (optional, falls back to keyword routing)
+    "onnxruntime>=1.20.0",
+    "tokenizers>=0.21.0",
+]
+rag = [
+    # RAG extras (numpy already in core deps)
+]
 dev = [
     "pytest>=8.3.0",
     "pytest-asyncio>=0.24.0",
@@ -63,14 +97,23 @@ dev = [
     "mypy>=1.13.0",
     "pre-commit>=4.0.0",
 ]
-ml = [
-    # ONNX skill router (optional, falls back to keyword routing)
-    "onnxruntime>=1.20.0",
-    "tokenizers>=0.21.0",
+all = [
+    "graxia-tool[web,ollama,ml,rag,dev]",
 ]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/graxia_tool"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "src/graxia_tool/**",
+    "/AGENTS.md",
+    "/QUICKSTART.md",
+    "/ZERO_SETUP.md",
+    "/SUMMARY.md",
+    "/LEAN-CTX.md",
+    "/CLAUDE.md",
+]
 
 [tool.ruff]
 target-version = "py311"

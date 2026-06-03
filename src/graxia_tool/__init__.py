@@ -1,4 +1,4 @@
-"""Enterprise AI Agent Operating System.
+"""Graxia Tool — Universal AI Agent OS.
 
 Zero-setup AI agent platform:
 - No API key required (uses local Ollama by default)
@@ -17,7 +17,10 @@ from __future__ import annotations
 
 __version__ = "0.2.0"
 
-# Lazy imports to avoid loading heavy deps at import time
+# Expose key public API at top level
+from .llm import get_llm_client, OllamaClient, AnthropicClient, OpenAIClient, MockLLMClient
+from .agents import AGENT_REGISTRY, get_agent, list_agents
+
 __all__ = [
     "__version__",
     "get_llm_client",
@@ -28,5 +31,4 @@ __all__ = [
     "AGENT_REGISTRY",
     "get_agent",
     "list_agents",
-    "run_agent",
 ]

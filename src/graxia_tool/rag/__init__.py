@@ -9,7 +9,10 @@ Provides a complete RAG pipeline with:
 - Hypothetical questions for better retrieval
 """
 from __future__ import annotations
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
+
+if TYPE_CHECKING:
+    from graxia_tool.session_memory import SessionMemory
 
 from .ingestion import Document, load_document, load_directory
 from .chunker import Chunker, Chunk
@@ -129,6 +132,7 @@ class RAGEngine:
         use_context_window: bool = False,
         window_size: int = 1,
         use_hypothetical_questions: bool = True,
+        memory: Optional[SessionMemory] = None,
     ):
         """Initialize the RAG engine.
 
@@ -140,6 +144,7 @@ class RAGEngine:
             use_context_window: Enrich chunks with surrounding context.
             window_size: Number of neighboring chunks for context window.
             use_hypothetical_questions: Generate questions for better retrieval.
+            memory: Optional SessionMemory instance for recalling past context.
         """
         self.chunker = Chunker(chunk_size, chunk_overlap)
         self.retriever = HybridRetriever()
@@ -148,10 +153,19 @@ class RAGEngine:
         self.use_context_window = use_context_window
         self.window_size = window_size
         self.use_hypothetical_questions = use_hypothetical_questions
+        self.memory = memory
         self._all_chunks: List[Chunk] = []
         self._multimodal_indexer = MultimodalIndexer()
         self._question_index: Dict[str, List[str]] = {}
         self._embeddings: List[List[float]] = []
+
+    def set_memory(self, memory: SessionMemory) -> None:
+        """Attach a SessionMemory instance for recalling past context.
+
+        Args:
+            memory: SessionMemory instance.
+        """
+        self.memory = memory
 
     def ingest_file(self, path: str) -> int:
         """Ingest a single file into the RAG index.
@@ -308,31 +322,53 @@ class RAGEngine:
         if rerank and results:
             results = cross_encoder_rerank(query, results, top_k=top_k)
 
-        # Build output
-        context_parts = []
-        citations = []
+        # ── Check session memory for relevant past context ──
+        memory_results: list[dict[str, Any]] = []
+        if self.memory is not None:
+            mem_records = self.memory.recall(query)
+            for r in mem_records:
+                if r.score > 0.5:
+                    content = r.content
+                    if r.extra and r.extra.get("outcome"):
+                        content = f"{r.content}\n\nAnswer: {r.extra['outcome']}"
+                    citation = f"Memory ({r.memory_type}) — {r.memory_id}"
+                    if r.memory_type == "task" and r.extra.get("agent_type"):
+                        agent = r.extra["agent_type"]
+                        citation = f"Memory ({r.memory_type}/{agent}) — {r.memory_id}"
+                    memory_results.append({
+                        "content": content,
+                        "score": r.score,
+                        "source": "memory",
+                        "citation": citation,
+                        "memory_id": r.memory_id,
+                        "memory_type": r.memory_type,
+                    })
+
+        # Build merged results (memory results first, then retrieval)
+        merged: list[dict[str, Any]] = list(memory_results)
+        seen_contents = {m["content"] for m in memory_results}
+
         for chunk, score in results[:top_k]:
-            context_parts.append(chunk.content)
-            citation = f"{chunk.source}#{chunk.index}"
-            if chunk.title:
-                citation = f"{chunk.title} — {citation}"
-            citations.append(citation)
-
-        context = "\n\n---\n\n".join(context_parts)
-        est_tokens = len(context) // 4
-
-        return {
-            "query": query,
-            "results": [
-                {
+            if chunk.content not in seen_contents:
+                merged.append({
                     "content": chunk.content,
                     "score": round(score, 4),
                     "source": chunk.source,
                     "citation": f"{chunk.title or 'Document'} — {chunk.source}#{chunk.index}",
                     "chunk_id": chunk.id,
-                }
-                for chunk, score in results[:top_k]
-            ],
+                })
+                seen_contents.add(chunk.content)
+
+        merged = merged[:top_k]
+
+        context_parts = [r["content"] for r in merged]
+        citations = [r["citation"] for r in merged]
+        context = "\n\n---\n\n".join(context_parts)
+        est_tokens = len(context) // 4
+
+        return {
+            "query": query,
+            "results": merged,
             "context": context,
             "citations": citations,
             "estimated_tokens": est_tokens,

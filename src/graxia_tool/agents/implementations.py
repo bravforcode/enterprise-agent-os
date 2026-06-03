@@ -35,15 +35,8 @@ class Coder(BaseSubAgent):
     required_tools = ["file_read", "file_write", "shell_exec"]
 
     async def execute(self, query: str, context: Optional[dict] = None) -> SubAgentResult:
-        if self.llm_func:
-            prompt = f"Write code for: {query}\n\nProvide a complete, working implementation."
-            response = await self.llm_func(prompt)
-            return SubAgentResult(
-                success=True,
-                output={"code": response, "language": "python"},
-                tokens_used=len(prompt) // 4 + len(response) // 4,
-            )
-        return SubAgentResult(success=True, output={"code": f"# TODO: {query}"})
+        system = "You are a coder agent. Write clean, idiomatic, well-structured code. Provide complete working implementations with proper error handling."
+        return await self.execute_with_llm(query, system, output_key="code", output_extra={"language": "python"})
 
 
 class Debugger(BaseSubAgent):
@@ -53,15 +46,8 @@ class Debugger(BaseSubAgent):
     required_tools = ["file_read", "shell_exec"]
 
     async def execute(self, query: str, context: Optional[dict] = None) -> SubAgentResult:
-        if self.llm_func:
-            prompt = f"Debug this issue: {query}\n\nUse systematic debugging approach. Identify root cause and fix."
-            response = await self.llm_func(prompt)
-            return SubAgentResult(
-                success=True,
-                output={"diagnosis": response, "steps": []},
-                tokens_used=len(prompt) // 4 + len(response) // 4,
-            )
-        return SubAgentResult(success=True, output={"diagnosis": f"Investigating: {query}"})
+        system = "You are a debugger agent. Systematically analyze issues, identify root causes, and provide fixes. Use a structured debugging approach."
+        return await self.execute_with_llm(query, system, output_key="diagnosis")
 
 
 class Tester(BaseSubAgent):
@@ -71,15 +57,8 @@ class Tester(BaseSubAgent):
     required_tools = ["file_read", "file_write", "shell_exec"]
 
     async def execute(self, query: str, context: Optional[dict] = None) -> SubAgentResult:
-        if self.llm_func:
-            prompt = f"Write tests for: {query}\n\nProvide pytest-compatible test code with proper assertions."
-            response = await self.llm_func(prompt)
-            return SubAgentResult(
-                success=True,
-                output={"tests": response, "framework": "pytest"},
-                tokens_used=len(prompt) // 4 + len(response) // 4,
-            )
-        return SubAgentResult(success=True, output={"tests": f"# TODO: test for {query}"})
+        system = "You are a tester agent. Write comprehensive tests using pytest. Cover edge cases, error conditions, and happy paths."
+        return await self.execute_with_llm(query, system, output_key="tests", output_extra={"framework": "pytest"})
 
 
 class Reviewer(BaseSubAgent):
@@ -89,15 +68,8 @@ class Reviewer(BaseSubAgent):
     required_tools = ["file_read"]
 
     async def execute(self, query: str, context: Optional[dict] = None) -> SubAgentResult:
-        if self.llm_func:
-            prompt = f"Review this code/PR: {query}\n\nProvide structured feedback: positives, issues, suggestions."
-            response = await self.llm_func(prompt)
-            return SubAgentResult(
-                success=True,
-                output={"review": response, "approved": False},
-                tokens_used=len(prompt) // 4 + len(response) // 4,
-            )
-        return SubAgentResult(success=True, output={"review": f"Reviewing: {query}"})
+        system = "You are a code reviewer agent. Review code for correctness, security, performance, and best practices. Provide actionable feedback."
+        return await self.execute_with_llm(query, system, output_key="review")
 
 
 class Deployer(BaseSubAgent):
@@ -105,18 +77,11 @@ class Deployer(BaseSubAgent):
     description = "Deployment operations"
     required_skills = ["finishing-a-development-branch"]
     required_tools = ["shell_exec", "git", "deploy"]
-    max_tokens = 8000
+    max_tokens = 8192
 
     async def execute(self, query: str, context: Optional[dict] = None) -> SubAgentResult:
-        if self.llm_func:
-            prompt = f"Plan deployment for: {query}\n\nProvide steps, rollback plan, and risk assessment."
-            response = await self.llm_func(prompt)
-            return SubAgentResult(
-                success=True,
-                output={"plan": response, "requires_approval": True},
-                tokens_used=len(prompt) // 4 + len(response) // 4,
-            )
-        return SubAgentResult(success=True, output={"plan": f"Deploy: {query}"})
+        system = "You are a deployment agent. Plan and execute deployments with rollback strategies, health checks, and risk assessment."
+        return await self.execute_with_llm(query, system, output_key="plan", output_extra={"requires_approval": True})
 
 
 class Documenter(BaseSubAgent):
@@ -126,15 +91,8 @@ class Documenter(BaseSubAgent):
     required_tools = ["file_read", "file_write"]
 
     async def execute(self, query: str, context: Optional[dict] = None) -> SubAgentResult:
-        if self.llm_func:
-            prompt = f"Write documentation for: {query}\n\nProvide clear, concise docs with examples."
-            response = await self.llm_func(prompt)
-            return SubAgentResult(
-                success=True,
-                output={"docs": response, "format": "markdown"},
-                tokens_used=len(prompt) // 4 + len(response) // 4,
-            )
-        return SubAgentResult(success=True, output={"docs": f"# {query}"})
+        system = "You are a documentation agent. Write clear, concise documentation with examples. Use markdown formatting."
+        return await self.execute_with_llm(query, system, output_key="docs", output_extra={"format": "markdown"})
 
 
 class Researcher(BaseSubAgent):
@@ -144,15 +102,8 @@ class Researcher(BaseSubAgent):
     required_tools = ["web_search", "file_read"]
 
     async def execute(self, query: str, context: Optional[dict] = None) -> SubAgentResult:
-        if self.llm_func:
-            prompt = f"Research: {query}\n\nProvide findings with sources."
-            response = await self.llm_func(prompt)
-            return SubAgentResult(
-                success=True,
-                output={"findings": response, "sources": []},
-                tokens_used=len(prompt) // 4 + len(response) // 4,
-            )
-        return SubAgentResult(success=True, output={"findings": f"Researching: {query}"})
+        system = "You are a research agent. Investigate topics thoroughly and provide well-structured findings. Include relevant details and sources."
+        return await self.execute_with_llm(query, system, output_key="findings")
 
 
 class DataEngineer(BaseSubAgent):
@@ -162,15 +113,8 @@ class DataEngineer(BaseSubAgent):
     required_tools = ["file_read", "file_write", "shell_exec", "database_query"]
 
     async def execute(self, query: str, context: Optional[dict] = None) -> SubAgentResult:
-        if self.llm_func:
-            prompt = f"Design data pipeline for: {query}\n\nProvide schema, transformations, and validation."
-            response = await self.llm_func(prompt)
-            return SubAgentResult(
-                success=True,
-                output={"pipeline": response, "schema": {}},
-                tokens_used=len(prompt) // 4 + len(response) // 4,
-            )
-        return SubAgentResult(success=True, output={"pipeline": f"Pipeline: {query}"})
+        system = "You are a data engineer agent. Design data pipelines, ETL processes, and schemas. Focus on data quality and validation."
+        return await self.execute_with_llm(query, system, output_key="pipeline")
 
 
 class Sysadmin(BaseSubAgent):
@@ -180,15 +124,8 @@ class Sysadmin(BaseSubAgent):
     required_tools = ["shell_exec", "file_read", "file_write"]
 
     async def execute(self, query: str, context: Optional[dict] = None) -> SubAgentResult:
-        if self.llm_func:
-            prompt = f"System operation: {query}\n\nProvide commands and verification steps."
-            response = await self.llm_func(prompt)
-            return SubAgentResult(
-                success=True,
-                output={"commands": response, "risk_level": "medium"},
-                tokens_used=len(prompt) // 4 + len(response) // 4,
-            )
-        return SubAgentResult(success=True, output={"commands": f"# {query}"})
+        system = "You are a systems administrator agent. Manage system operations with safe, verified commands. Include rollback steps."
+        return await self.execute_with_llm(query, system, output_key="commands")
 
 
 class Conversational(BaseSubAgent):
@@ -198,14 +135,8 @@ class Conversational(BaseSubAgent):
     required_tools = []
 
     async def execute(self, query: str, context: Optional[dict] = None) -> SubAgentResult:
-        if self.llm_func:
-            response = await self.llm_func(query)
-            return SubAgentResult(
-                success=True,
-                output={"response": response},
-                tokens_used=len(query) // 4 + len(response) // 4,
-            )
-        return SubAgentResult(success=True, output={"response": f"You said: {query}"})
+        system = "You are a conversational agent. Be helpful, concise, and friendly in your responses."
+        return await self.execute_with_llm(query, system, output_key="response")
 
 
 class General(BaseSubAgent):
@@ -213,14 +144,8 @@ class General(BaseSubAgent):
     description = "General purpose fallback"
 
     async def execute(self, query: str, context: Optional[dict] = None) -> SubAgentResult:
-        if self.llm_func:
-            response = await self.llm_func(query)
-            return SubAgentResult(
-                success=True,
-                output={"response": response},
-                tokens_used=len(query) // 4 + len(response) // 4,
-            )
-        return SubAgentResult(success=True, output={"response": f"Processing: {query}"})
+        system = "You are a general-purpose agent. Handle any task with practical, well-reasoned responses."
+        return await self.execute_with_llm(query, system, output_key="response")
 
 
 class Validator(BaseSubAgent):
@@ -251,15 +176,8 @@ class Planner(BaseSubAgent):
     required_tools = []
 
     async def execute(self, query: str, context: Optional[dict] = None) -> SubAgentResult:
-        if self.llm_func:
-            prompt = f"Create a plan for: {query}\n\nBreak into ordered steps with estimates."
-            response = await self.llm_func(prompt)
-            return SubAgentResult(
-                success=True,
-                output={"plan": response, "steps": []},
-                tokens_used=len(prompt) // 4 + len(response) // 4,
-            )
-        return SubAgentResult(success=True, output={"plan": f"1. Analyze: {query}\n2. Implement\n3. Test"})
+        system = "You are a planning agent. Break tasks into ordered steps with time estimates and dependencies."
+        return await self.execute_with_llm(query, system, output_key="plan")
 
 
 class Architect(BaseSubAgent):
@@ -269,15 +187,8 @@ class Architect(BaseSubAgent):
     required_tools = []
 
     async def execute(self, query: str, context: Optional[dict] = None) -> SubAgentResult:
-        if self.llm_func:
-            prompt = f"Design architecture for: {query}\n\nProvide components, data flow, trade-offs."
-            response = await self.llm_func(prompt)
-            return SubAgentResult(
-                success=True,
-                output={"design": response, "components": []},
-                tokens_used=len(prompt) // 4 + len(response) // 4,
-            )
-        return SubAgentResult(success=True, output={"design": f"Architecture: {query}"})
+        system = "You are a system architect agent. Design systems with clear components, data flow, and trade-off analysis."
+        return await self.execute_with_llm(query, system, output_key="design")
 
 
 class SecurityAuditor(BaseSubAgent):
@@ -285,18 +196,11 @@ class SecurityAuditor(BaseSubAgent):
     description = "Security analysis"
     required_skills = []
     required_tools = ["file_read", "shell_exec"]
-    max_tokens = 6000
+    max_tokens = 200
 
     async def execute(self, query: str, context: Optional[dict] = None) -> SubAgentResult:
-        if self.llm_func:
-            prompt = f"Security audit: {query}\n\nIdentify vulnerabilities, provide severity, suggest fixes."
-            response = await self.llm_func(prompt)
-            return SubAgentResult(
-                success=True,
-                output={"audit": response, "vulnerabilities": []},
-                tokens_used=len(prompt) // 4 + len(response) // 4,
-            )
-        return SubAgentResult(success=True, output={"audit": f"Auditing: {query}"})
+        system = "You are a security auditor agent. Identify vulnerabilities, assess severity, and recommend fixes. Follow OWASP guidelines."
+        return await self.execute_with_llm(query, system, output_key="audit")
 
 
 class DatabaseAdmin(BaseSubAgent):
@@ -305,22 +209,11 @@ class DatabaseAdmin(BaseSubAgent):
     description = "Database schema design, query optimization, migrations"
     required_skills = ["test-driven-development"]
     required_tools = ["file_read", "file_write", "shell_exec"]
-    max_tokens = 4000
+    max_tokens = 200
 
     async def execute(self, query: str, context: Optional[dict] = None) -> SubAgentResult:
-        if self.llm_func:
-            prompt = (
-                f"Database administration task: {query}\n\n"
-                "Provide: schema design, SQL queries, migration scripts, "
-                "index recommendations, and performance analysis."
-            )
-            response = await self.llm_func(prompt)
-            return SubAgentResult(
-                success=True,
-                output={"sql": response, "migrations": [], "indexes": []},
-                tokens_used=len(prompt) // 4 + len(response) // 4,
-            )
-        return SubAgentResult(success=True, output={"sql": f"-- TODO: {query}"})
+        system = "You are a database administrator agent. Design schemas, write optimized queries, plan migrations, and tune performance."
+        return await self.execute_with_llm(query, system, output_key="sql")
 
 
 class NetworkEngineer(BaseSubAgent):
@@ -329,22 +222,11 @@ class NetworkEngineer(BaseSubAgent):
     description = "Network design, DNS, load balancing, security"
     required_skills = []
     required_tools = ["file_read", "shell_exec"]
-    max_tokens = 4000
+    max_tokens = 200
 
     async def execute(self, query: str, context: Optional[dict] = None) -> SubAgentResult:
-        if self.llm_func:
-            prompt = (
-                f"Network engineering task: {query}\n\n"
-                "Provide: network topology, DNS config, load balancer setup, "
-                "firewall rules, CDN configuration, and security recommendations."
-            )
-            response = await self.llm_func(prompt)
-            return SubAgentResult(
-                success=True,
-                output={"config": response, "topology": "", "recommendations": []},
-                tokens_used=len(prompt) // 4 + len(response) // 4,
-            )
-        return SubAgentResult(success=True, output={"config": f"# TODO: {query}"})
+        system = "You are a network engineer agent. Design networks, configure DNS, load balancers, firewalls, and CDN."
+        return await self.execute_with_llm(query, system, output_key="config")
 
 
 class FrontendDesigner(BaseSubAgent):
@@ -353,22 +235,11 @@ class FrontendDesigner(BaseSubAgent):
     description = "UI/UX design, components, accessibility, responsive layouts"
     required_skills = []
     required_tools = ["file_read", "file_write"]
-    max_tokens = 4000
+    max_tokens = 200
 
     async def execute(self, query: str, context: Optional[dict] = None) -> SubAgentResult:
-        if self.llm_func:
-            prompt = (
-                f"Frontend design task: {query}\n\n"
-                "Provide: component design, HTML/CSS/JS code, accessibility (ARIA) "
-                "annotations, responsive breakpoints, and UX considerations."
-            )
-            response = await self.llm_func(prompt)
-            return SubAgentResult(
-                success=True,
-                output={"code": response, "components": [], "a11y_notes": []},
-                tokens_used=len(prompt) // 4 + len(response) // 4,
-            )
-        return SubAgentResult(success=True, output={"code": f"<!-- TODO: {query} -->"})
+        system = "You are a frontend designer agent. Design UI/UX with accessible, responsive components. Follow WCAG guidelines."
+        return await self.execute_with_llm(query, system, output_key="code")
 
 
 # Registry

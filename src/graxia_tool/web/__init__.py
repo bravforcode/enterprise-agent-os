@@ -222,6 +222,33 @@ async def monitoring_agents():
     return get_agent_statuses()
 
 
+@app.get("/api/monitoring/memory")
+async def monitoring_memory():
+    """SessionMemory stats: tasks stored, preferences, codebase entries."""
+    from graxia_tool.session_memory import SessionMemory
+    mem = SessionMemory()
+    summary = mem.get_session_summary()
+    prefs = mem.get_all_preferences()
+    return {
+        "total_tasks": summary.total_tasks,
+        "successful_tasks": summary.successful_tasks,
+        "failed_tasks": summary.failed_tasks,
+        "total_tokens": summary.total_tokens,
+        "total_duration_ms": summary.total_duration_ms,
+        "top_intents": summary.top_intents,
+        "top_agents": summary.top_agents,
+        "preferences": prefs,
+    }
+
+
+@app.get("/api/monitoring/cache")
+async def monitoring_cache():
+    """ContextCache stats: hit rate, size, entries."""
+    from graxia_tool.context_cache import ContextCache
+    cache = ContextCache()
+    return cache.get_stats()
+
+
 @app.get("/api/monitoring/seed")
 async def monitoring_seed():
     """Seed demo data so the dashboard has something to show."""
@@ -340,6 +367,34 @@ MONITORING_DASHBOARD_HTML = """
         .header-controls .seed-btn:hover {
             background: rgba(34, 211, 238, 0.2);
         }
+        .tabs {
+            display: flex;
+            gap: 0;
+            background: var(--bg-secondary);
+            border-bottom: 1px solid var(--border);
+            padding: 0 24px;
+        }
+        .tab-btn {
+            background: transparent;
+            color: var(--text-secondary);
+            border: none;
+            border-bottom: 2px solid transparent;
+            padding: 10px 20px;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 500;
+            transition: all 0.15s;
+        }
+        .tab-btn:hover {
+            color: var(--text-primary);
+            background: rgba(255,255,255,0.03);
+        }
+        .tab-btn.active {
+            color: var(--accent-blue);
+            border-bottom-color: var(--accent-blue);
+        }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
         .container {
             max-width: 1400px;
             margin: 0 auto;
@@ -539,6 +594,105 @@ MONITORING_DASHBOARD_HTML = """
             color: var(--text-muted);
             font-size: 13px;
         }
+        .section-title {
+            font-size: 16px;
+            font-weight: 600;
+            color: var(--accent-blue);
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .section-title .sub {
+            font-size: 12px;
+            font-weight: 400;
+            color: var(--text-muted);
+        }
+        .list-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            overflow: hidden;
+        }
+        .list-card h3 {
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--text-secondary);
+            padding: 14px 18px;
+            border-bottom: 1px solid var(--border);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .list-card ul {
+            list-style: none;
+            padding: 8px 0;
+        }
+        .list-card li {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 18px;
+            font-size: 13px;
+            border-bottom: 1px solid rgba(42, 51, 82, 0.3);
+            color: var(--text-primary);
+        }
+        .list-card li:last-child { border-bottom: none; }
+        .list-card li .key {
+            color: var(--text-secondary);
+        }
+        .list-card li .value {
+            color: var(--accent-cyan);
+            font-weight: 500;
+        }
+        .prefs-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 10px;
+        }
+        .pref-item {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 12px 16px;
+            transition: border-color 0.2s;
+        }
+        .pref-item:hover { border-color: var(--border-accent); }
+        .pref-key {
+            font-size: 10px;
+            text-transform: uppercase;
+            letter-spacing: 0.6px;
+            color: var(--text-muted);
+        }
+        .pref-value {
+            font-size: 14px;
+            font-weight: 500;
+            color: var(--accent-cyan);
+            margin-top: 4px;
+            word-break: break-all;
+        }
+        .intent-bar {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .intent-bar .bar-track {
+            flex: 1;
+            height: 6px;
+            background: var(--border);
+            border-radius: 3px;
+            overflow: hidden;
+        }
+        .intent-bar .bar-fill {
+            height: 100%;
+            border-radius: 3px;
+            transition: width 0.4s;
+        }
+        .intent-bar .count {
+            font-size: 12px;
+            color: var(--text-secondary);
+            font-variant-numeric: tabular-nums;
+            min-width: 30px;
+            text-align: right;
+        }
         @media (max-width: 1024px) {
             .charts-grid { grid-template-columns: 1fr; }
             .bottom-grid { grid-template-columns: 1fr; }
@@ -547,6 +701,7 @@ MONITORING_DASHBOARD_HTML = """
             .stats-grid { grid-template-columns: repeat(2, 1fr); }
             .header { flex-direction: column; gap: 10px; align-items: flex-start; }
             .container { padding: 14px; }
+            .tabs { padding: 0 14px; overflow-x: auto; }
         }
     </style>
 </head>
@@ -560,78 +715,163 @@ MONITORING_DASHBOARD_HTML = """
         </div>
     </div>
 
-    <div class="container">
-        <div class="stats-grid">
-            <div class="stat-card">
-                <div class="stat-label">Active Agents</div>
-                <div class="stat-value green" id="stat-active">0</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-label">Total Runs</div>
-                <div class="stat-value blue" id="stat-runs">0</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-label">Success Rate</div>
-                <div class="stat-value cyan" id="stat-success-rate">100%</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-label">Total Cost</div>
-                <div class="stat-value yellow" id="stat-cost">$0.00</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-label">Total Tokens</div>
-                <div class="stat-value purple" id="stat-tokens">0</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-label">Failures</div>
-                <div class="stat-value red" id="stat-failures">0</div>
-            </div>
-        </div>
+    <div class="tabs">
+        <button class="tab-btn active" onclick="switchTab('activity')">Agent Activity</button>
+        <button class="tab-btn" onclick="switchTab('memory')">Memory &amp; Cache</button>
+    </div>
 
-        <div class="charts-grid">
-            <div class="chart-card">
-                <h3>Tokens Over Time</h3>
-                <canvas id="chart-tokens"></canvas>
-            </div>
-            <div class="chart-card">
-                <h3>Cost Over Time</h3>
-                <canvas id="chart-cost"></canvas>
-            </div>
-            <div class="chart-card">
-                <h3>Latency (ms)</h3>
-                <canvas id="chart-latency"></canvas>
-            </div>
-            <div class="chart-card">
-                <h3>Cost by Agent</h3>
-                <canvas id="chart-cost-pie"></canvas>
-            </div>
-        </div>
-
-        <div class="bottom-grid">
-            <div class="agents-table">
-                <h3>Agent Status</h3>
-                <table>
-                    <thead>
-                        <tr>
-                            <th>Agent</th>
-                            <th>Status</th>
-                            <th>Runs</th>
-                            <th>Success</th>
-                            <th>Tokens</th>
-                            <th>Cost</th>
-                            <th>Avg Latency</th>
-                        </tr>
-                    </thead>
-                    <tbody id="agents-body">
-                        <tr><td colspan="7" class="empty-state">No agents tracked yet</td></tr>
-                    </tbody>
-                </table>
-            </div>
-            <div class="activity-feed">
-                <h3>Activity Feed</h3>
-                <div class="feed-list" id="feed-list">
-                    <div class="empty-state">No activity yet</div>
+    <!-- Tab: Agent Activity -->
+    <div id="tab-activity" class="tab-content active">
+        <div class="container">
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-label">Active Agents</div>
+                    <div class="stat-value green" id="stat-active">0</div>
                 </div>
+                <div class="stat-card">
+                    <div class="stat-label">Total Runs</div>
+                    <div class="stat-value blue" id="stat-runs">0</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Success Rate</div>
+                    <div class="stat-value cyan" id="stat-success-rate">100%</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Total Cost</div>
+                    <div class="stat-value yellow" id="stat-cost">$0.00</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Total Tokens</div>
+                    <div class="stat-value purple" id="stat-tokens">0</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Failures</div>
+                    <div class="stat-value red" id="stat-failures">0</div>
+                </div>
+            </div>
+
+            <div class="charts-grid">
+                <div class="chart-card">
+                    <h3>Tokens Over Time</h3>
+                    <canvas id="chart-tokens"></canvas>
+                </div>
+                <div class="chart-card">
+                    <h3>Cost Over Time</h3>
+                    <canvas id="chart-cost"></canvas>
+                </div>
+                <div class="chart-card">
+                    <h3>Latency (ms)</h3>
+                    <canvas id="chart-latency"></canvas>
+                </div>
+                <div class="chart-card">
+                    <h3>Cost by Agent</h3>
+                    <canvas id="chart-cost-pie"></canvas>
+                </div>
+            </div>
+
+            <div class="bottom-grid">
+                <div class="agents-table">
+                    <h3>Agent Status</h3>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Agent</th>
+                                <th>Status</th>
+                                <th>Runs</th>
+                                <th>Success</th>
+                                <th>Tokens</th>
+                                <th>Cost</th>
+                                <th>Avg Latency</th>
+                            </tr>
+                        </thead>
+                        <tbody id="agents-body">
+                            <tr><td colspan="7" class="empty-state">No agents tracked yet</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+                <div class="activity-feed">
+                    <h3>Activity Feed</h3>
+                    <div class="feed-list" id="feed-list">
+                        <div class="empty-state">No activity yet</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Tab: Memory & Cache -->
+    <div id="tab-memory" class="tab-content">
+        <div class="container">
+            <div class="section-title">Memory <span class="sub">Session Memory — task outcomes, preferences, codebase knowledge</span></div>
+            <div class="stats-grid" id="memory-stats">
+                <div class="stat-card">
+                    <div class="stat-label">Total Tasks</div>
+                    <div class="stat-value blue" id="mem-total-tasks">0</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Successful</div>
+                    <div class="stat-value green" id="mem-successful">0</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Failed</div>
+                    <div class="stat-value red" id="mem-failed">0</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Total Duration</div>
+                    <div class="stat-value cyan" id="mem-duration">0ms</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Total Tokens</div>
+                    <div class="stat-value purple" id="mem-tokens">0</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Success Rate</div>
+                    <div class="stat-value yellow" id="mem-success-rate">0%</div>
+                </div>
+            </div>
+
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:20px;">
+                <div class="list-card">
+                    <h3>Top Agents</h3>
+                    <ul id="mem-top-agents"><li class="empty-state">No data</li></ul>
+                </div>
+                <div class="list-card">
+                    <h3>Top Intents</h3>
+                    <ul id="mem-top-intents"><li class="empty-state">No data</li></ul>
+                </div>
+            </div>
+
+            <div class="section-title" style="margin-top:28px;">Cache <span class="sub">ContextCache — cached routing decisions and results</span></div>
+            <div class="stats-grid" id="cache-stats">
+                <div class="stat-card">
+                    <div class="stat-label">Hit Rate</div>
+                    <div class="stat-value green" id="cache-hit-rate">0%</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Total Queries</div>
+                    <div class="stat-value blue" id="cache-queries">0</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Hits</div>
+                    <div class="stat-value cyan" id="cache-hits">0</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Misses</div>
+                    <div class="stat-value yellow" id="cache-misses">0</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Cached Contexts</div>
+                    <div class="stat-value purple" id="cache-cached">0</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Expired</div>
+                    <div class="stat-value red" id="cache-expired">0</div>
+                </div>
+            </div>
+
+            <div class="section-title" style="margin-top:28px;">Preferences <span class="sub">User preferences stored in session memory</span></div>
+            <div id="prefs-container" class="prefs-grid">
+                <div class="empty-state" style="grid-column:1/-1;">No preferences stored</div>
             </div>
         </div>
     </div>
@@ -737,6 +977,89 @@ MONITORING_DASHBOARD_HTML = """
             return Math.floor(s / 3600) + 'h ago';
         }
 
+        function switchTab(name) {
+            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+            const btn = document.querySelector(`.tab-btn[onclick*="${name}"]`);
+            if (btn) btn.classList.add('active');
+            document.getElementById('tab-' + name).classList.add('active');
+            if (name === 'memory') updateMemoryTab();
+        }
+
+        async function updateMemoryTab() {
+            const [memRes, cacheRes] = await Promise.all([
+                fetchJSON('/api/monitoring/memory'),
+                fetchJSON('/api/monitoring/cache'),
+            ]);
+
+            // Memory stats
+            document.getElementById('mem-total-tasks').textContent = formatNum(memRes.total_tasks);
+            document.getElementById('mem-successful').textContent = formatNum(memRes.successful_tasks);
+            document.getElementById('mem-failed').textContent = formatNum(memRes.failed_tasks);
+            const total = memRes.total_tasks || 1;
+            const sr = ((memRes.successful_tasks / total) * 100).toFixed(1);
+            document.getElementById('mem-success-rate').textContent = sr + '%';
+            const dur = memRes.total_duration_ms;
+            document.getElementById('mem-duration').textContent = dur >= 1000 ? (dur / 1000).toFixed(1) + 's' : dur.toFixed(0) + 'ms';
+            document.getElementById('mem-tokens').textContent = formatNum(memRes.total_tokens);
+
+            // Top agents
+            const agentsList = document.getElementById('mem-top-agents');
+            if (memRes.top_agents && memRes.top_agents.length > 0) {
+                const maxCount = Math.max(...memRes.top_agents.map(a => a[1]));
+                agentsList.innerHTML = memRes.top_agents.map(a => `
+                    <li>
+                        <span style="font-weight:500;color:var(--accent-cyan);">${a[0]}</span>
+                        <div class="intent-bar" style="flex:1;margin-left:12px;">
+                            <div class="bar-track"><div class="bar-fill" style="width:${(a[1]/maxCount*100).toFixed(0)}%;background:var(--accent-blue);"></div></div>
+                            <span class="count">${a[1]}</span>
+                        </div>
+                    </li>
+                `).join('');
+            } else {
+                agentsList.innerHTML = '<li class="empty-state">No agent data</li>';
+            }
+
+            // Top intents
+            const intentsList = document.getElementById('mem-top-intents');
+            if (memRes.top_intents && memRes.top_intents.length > 0) {
+                const maxCount = Math.max(...memRes.top_intents.map(i => i[1]));
+                intentsList.innerHTML = memRes.top_intents.map(i => `
+                    <li>
+                        <span style="font-weight:500;color:var(--accent-purple);">${i[0] || '(empty)'}</span>
+                        <div class="intent-bar" style="flex:1;margin-left:12px;">
+                            <div class="bar-track"><div class="bar-fill" style="width:${(i[1]/maxCount*100).toFixed(0)}%;background:var(--accent-purple);"></div></div>
+                            <span class="count">${i[1]}</span>
+                        </div>
+                    </li>
+                `).join('');
+            } else {
+                intentsList.innerHTML = '<li class="empty-state">No intent data</li>';
+            }
+
+            // Cache stats
+            document.getElementById('cache-hit-rate').textContent = (cacheRes.hit_rate * 100).toFixed(1) + '%';
+            document.getElementById('cache-queries').textContent = formatNum(cacheRes.total_queries);
+            document.getElementById('cache-hits').textContent = formatNum(cacheRes.hits);
+            document.getElementById('cache-misses').textContent = formatNum(cacheRes.misses);
+            document.getElementById('cache-cached').textContent = formatNum(cacheRes.cached_contexts);
+            document.getElementById('cache-expired').textContent = formatNum(cacheRes.expired_contexts);
+
+            // Preferences
+            const prefs = document.getElementById('prefs-container');
+            const prefKeys = Object.keys(memRes.preferences);
+            if (prefKeys.length > 0) {
+                prefs.innerHTML = prefKeys.map(k => `
+                    <div class="pref-item">
+                        <div class="pref-key">${k}</div>
+                        <div class="pref-value">${memRes.preferences[k]}</div>
+                    </div>
+                `).join('');
+            } else {
+                prefs.innerHTML = '<div class="empty-state" style="grid-column:1/-1;">No preferences stored</div>';
+            }
+        }
+
         async function updateDashboard() {
             const [metricsRes, agentsRes, feedRes] = await Promise.all([
                 fetchJSON('/api/monitoring/metrics'),
@@ -797,7 +1120,7 @@ MONITORING_DASHBOARD_HTML = """
                         <span class="feed-time">${timeAgo(e.timestamp)}</span>
                         <span class="feed-agent">${e.agent_name}</span>
                         <span class="feed-type ${e.event_type}">${e.event_type}</span>
-                        <span class="feed-detail">${e.query || e.metadata?.tool_name || '-'}</span>
+                        <span class="feed-detail">${e.query || (e.metadata && e.metadata.tool_name) || '-'}</span>
                         ${e.cost_usd > 0 ? '<span class="feed-cost">$' + e.cost_usd.toFixed(4) + '</span>' : ''}
                     </div>
                 `).join('');
@@ -808,6 +1131,8 @@ MONITORING_DASHBOARD_HTML = """
 
         async function refreshAll() {
             await updateDashboard();
+            const active = document.querySelector('.tab-content.active');
+            if (active && active.id === 'tab-memory') await updateMemoryTab();
         }
 
         async function seedDemo() {
@@ -817,7 +1142,7 @@ MONITORING_DASHBOARD_HTML = """
             await fetch('/api/monitoring/seed');
             btn.textContent = 'Seed Demo Data';
             btn.disabled = false;
-            await updateDashboard();
+            await refreshAll();
         }
 
         initCharts();

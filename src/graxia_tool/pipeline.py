@@ -1,14 +1,15 @@
 """End-to-end pipeline for Agent OS.
 
-Flow: Input → Guards → Classify → Route → Plan → Execute → Validate → Log
+Flow: Input → Guards → Classify → Route → Hydrate Skills → Plan → Execute → Heal → Validate → Log
 """
 from __future__ import annotations
 
+import os
 import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any
+from typing import Any, Optional
 
 from .core.logging import get_logger
 from .core.intent_router import classify_intent, Intent
@@ -23,6 +24,7 @@ from .agents.implementations import AGENT_REGISTRY
 from .auto_router import AutoRouter, RoutingDecision
 from .session_memory import SessionMemory, TaskRecord
 from .context_cache import ContextCache
+from .skills.registry import SkillRegistry, SkillDefinition
 from .multi_agent import (
     PatternType,
     PipelineCoordinator,
@@ -51,6 +53,8 @@ class PipelineRequest:
     context: dict[str, Any] = field(default_factory=dict)
     skip_guards: bool = False
     skip_governance: bool = False
+    skills_context: dict[str, str] = field(default_factory=dict)
+    routing_decision: Optional[dict[str, Any]] = None
 
 
 @dataclass
@@ -68,7 +72,33 @@ class PipelineResponse:
     blocked_reason: str | None = None
     approval_required: bool = False
     error: str | None = None
+    healing_attempts: int = 0
+    skills_loaded: list[str] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
+
+
+# ── Fallback map for auto-healing ─────────────────────────────────────
+
+FALLBACK_MAP: dict[str, list[str]] = {
+    'coder': ['general', 'conversational'],
+    'debugger': ['coder', 'general'],
+    'tester': ['coder', 'general'],
+    'reviewer': ['general', 'conversational'],
+    'deployer': ['sysadmin', 'general'],
+    'documenter': ['general', 'conversational'],
+    'researcher': ['architect', 'general'],
+    'data_engineer': ['coder', 'general'],
+    'sysadmin': ['general', 'conversational'],
+    'planner': ['architect', 'general'],
+    'architect': ['planner', 'general'],
+    'security_auditor': ['reviewer', 'general'],
+    'database_admin': ['data_engineer', 'coder', 'general'],
+    'network_engineer': ['sysadmin', 'general'],
+    'frontend_designer': ['coder', 'general'],
+    'conversational': ['general'],
+    'general': ['conversational'],
+    'validator': ['general'],
+}
 
 
 class EndToEndPipeline:
@@ -86,6 +116,8 @@ class EndToEndPipeline:
         agents: dict[str, BaseSubAgent] | None = None,
         session_memory: SessionMemory | None = None,
         context_cache: ContextCache | None = None,
+        skill_registry: SkillRegistry | None = None,
+        max_retries: int = 2,
     ) -> None:
         self.orchestrator = orchestrator or Orchestrator()
         self.output_validator = output_validator or OutputValidator()
@@ -95,6 +127,8 @@ class EndToEndPipeline:
         self.auto_router = AutoRouter()
         self.session_memory = session_memory or SessionMemory()
         self.context_cache = context_cache or ContextCache()
+        self.skill_registry = skill_registry or SkillRegistry()
+        self.max_retries = max_retries
 
     async def process(self, request: PipelineRequest) -> PipelineResponse:
         """Run the full pipeline."""
@@ -142,6 +176,16 @@ class EndToEndPipeline:
                     mcp_tools=routing_decision.mcp_tools,
                     confidence=routing_decision.confidence,
                     model_tier=routing_decision.model_tier)
+
+        # Store routing decision in request
+        request.routing_decision = routing_decision.to_dict()
+
+        # Stage 2b: Skill Auto-Hydration
+        skills_context = self._hydrate_skills(routing_decision)
+        request.skills_context = skills_context
+        skills_loaded = list(skills_context.keys())
+        _log_stage("skill_hydrate", "pass" if skills_loaded else "skip",
+                   skills=skills_loaded, count=len(skills_loaded))
 
         # Use routing decision to override intent classification
         # (keep original for governance, but use routing for agent selection)
@@ -201,7 +245,6 @@ class EndToEndPipeline:
             # Use AutoRouter's agent selection (falls back to intent-based routing)
             agent_name = routing_decision.agent_type
             if agent_name not in self.agents:
-                # Fallback to original intent-based routing
                 agent_name = self._route_to_agent(intent.intent)
             if agent_name is None or agent_name not in self.agents:
                 return self._fail_response(
@@ -209,20 +252,36 @@ class EndToEndPipeline:
                     f"No agent found for intent {intent.intent.value}",
                 )
             _log_stage("route", "pass", agent=agent_name)
-            agent = self._get_agent_instance(agent_name)
-            agent_result = await agent.run(
-                request.input, context=request.context
+
+            # Build enriched context with skill content
+            enriched_context = {
+                **request.context,
+                "skills_context": skills_context,
+                "routing_decision": request.routing_decision,
+            }
+
+            # Execute with auto-healing
+            agent_result, healing_attempts = await self._execute_with_healing(
+                agent_name=agent_name,
+                prompt=request.input,
+                context=enriched_context,
+                intent=routing_decision.intent,
+                stages_log=_log_stage,
+                request_id=request_id,
             )
-            _log_stage("execute", "pass" if agent_result.success else "fail",
-                       agent=agent_name, duration_ms=agent_result.duration_ms)
+
             if not agent_result.success:
                 return self._fail_response(
                     request_id, start, stages,
-                    agent_result.error or "Agent execution failed",
+                    agent_result.error or "Agent execution failed after healing",
                 )
             output = agent_result.output
             record_agent(agent_name, "direct", agent_result.duration_ms / 1000, agent_result.success)
             pattern_used = "direct"
+
+            # Stage 4b: Feedback — mark skills as useful if execution succeeded
+            if agent_result.success and skills_loaded:
+                self._store_skill_feedback(routing_decision, skills_loaded, success=True)
 
         # ============================================================
         # Stage 5: Output Validation
@@ -305,8 +364,177 @@ class EndToEndPipeline:
             domain=intent.domain.value,
             risk_level=intent.risk_level.value,
             pattern_used=pattern_used,
+            healing_attempts=healing_attempts if not request.pattern else 0,
+            skills_loaded=skills_loaded,
             metadata={"stages_count": len(stages)},
         )
+
+    # ── Skill Auto-Hydration ─────────────────────────────────────────
+
+    def _hydrate_skills(self, decision: RoutingDecision) -> dict[str, str]:
+        """Load skill content for all skills in the routing decision.
+
+        Returns dict of skill_name -> skill_content (text from skill file).
+        """
+        hydrated: dict[str, str] = {}
+        self.skill_registry.maybe_reload()
+
+        for skill_name in decision.skills:
+            try:
+                skill_def = self.skill_registry.get_skill(skill_name)
+                if skill_def is None:
+                    logger.debug("skill_not_found", skill=skill_name)
+                    continue
+                content = self._read_skill_content(skill_def)
+                if content:
+                    hydrated[skill_name] = content
+                    logger.info("skill_hydrated", skill=skill_name, path=skill_def.path)
+            except Exception as e:
+                logger.warning("skill_hydrate_failed", skill=skill_name, error=str(e))
+
+        return hydrated
+
+    def _read_skill_content(self, skill_def: SkillDefinition) -> str:
+        """Read the raw content of a skill definition file."""
+        skill_path = skill_def.path
+        # skill_def.path may point to a directory (SKILL.md) or a file
+        if os.path.isdir(skill_path):
+            md_path = os.path.join(skill_path, "SKILL.md")
+            if os.path.isfile(md_path):
+                with open(md_path, encoding="utf-8", errors="replace") as fh:
+                    return fh.read()
+            return ""
+        if os.path.isfile(skill_path):
+            with open(skill_path, encoding="utf-8", errors="replace") as fh:
+                return fh.read()
+        return ""
+
+    def _store_skill_feedback(
+        self,
+        decision: RoutingDecision,
+        skills_loaded: list[str],
+        success: bool,
+    ) -> None:
+        """Record whether hydrated skills contributed to a successful outcome."""
+        if not skills_loaded:
+            return
+        try:
+            entry = {
+                "intent": decision.intent,
+                "skills": skills_loaded,
+                "agent": decision.agent_type,
+                "success": success,
+                "timestamp": datetime.utcnow().isoformat(),
+            }
+            feedback_key = f"skill_feedback:{decision.cache_key}"
+            self.context_cache.set(feedback_key, decision, entry)
+            logger.info("skill_feedback_stored", skills=skills_loaded, success=success)
+        except Exception as e:
+            logger.debug("skill_feedback_failed", error=str(e))
+
+    # ── Auto-Healing ─────────────────────────────────────────────────
+
+    async def _execute_with_healing(
+        self,
+        agent_name: str,
+        prompt: str,
+        context: dict[str, Any],
+        intent: str,
+        stages_log: Any,
+        request_id: str,
+    ) -> tuple[Any, int]:
+        """Execute agent with automatic fallback healing on failure.
+
+        Returns (SubAgentResult, healing_attempts).
+        """
+        current_agent = agent_name
+        healing_attempts = 0
+
+        for attempt in range(self.max_retries + 1):
+            agent = self._get_agent_instance(current_agent)
+            agent_context = {
+                **context,
+                "healing_attempt": attempt,
+                "healing_from": agent_name if attempt > 0 else None,
+            }
+
+            agent_result = await agent.run(prompt, context=agent_context)
+            stages_log(
+                "execute",
+                "pass" if agent_result.success else "fail",
+                agent=current_agent,
+                duration_ms=agent_result.duration_ms,
+                attempt=attempt + 1,
+                healing_attempts=healing_attempts,
+            )
+            record_agent(
+                current_agent, "direct",
+                agent_result.duration_ms / 1000,
+                agent_result.success,
+            )
+
+            if agent_result.success:
+                return agent_result, healing_attempts
+
+            # Attempt healing
+            if attempt < self.max_retries:
+                fallback = self._find_fallback_agent(intent, current_agent)
+                if fallback is None or fallback == current_agent:
+                    logger.warning(
+                        "no_fallback_available",
+                        agent=current_agent,
+                        intent=intent,
+                    )
+                    break
+                logger.info(
+                    "healing_triggered",
+                    failed_agent=current_agent,
+                    fallback=fallback,
+                    attempt=attempt + 1,
+                    max_retries=self.max_retries,
+                )
+                healing_attempts += 1
+                current_agent = fallback
+
+        return agent_result, healing_attempts
+
+    def _find_fallback_agent(self, intent: str, failed_agent: str) -> str | None:
+        """Find a fallback agent for a failed agent.
+
+        Uses FALLBACK_MAP first, then tries intent-based mapping,
+        then falls back to 'general' -> 'conversational'.
+        """
+        # Direct fallback map lookup
+        fallbacks = FALLBACK_MAP.get(failed_agent)
+        if fallbacks:
+            for fb in fallbacks:
+                if fb in self.agents:
+                    return fb
+
+        # Try intent-based fallback
+        intent_lower = intent.lower()
+        intent_fallback = {
+            "code": "general",
+            "debug": "coder",
+            "test": "coder",
+            "review": "general",
+            "deploy": "sysadmin",
+            "document": "general",
+            "research": "general",
+            "data": "coder",
+            "system": "general",
+            "conversation": "general",
+        }
+        candidate = intent_fallback.get(intent_lower)
+        if candidate and candidate != failed_agent and candidate in self.agents:
+            return candidate
+
+        # Last resort
+        if "general" in self.agents and "general" != failed_agent:
+            return "general"
+        if "conversational" in self.agents and "conversational" != failed_agent:
+            return "conversational"
+        return None
 
     def _get_agent_instance(self, agent_name: str) -> BaseSubAgent:
         """Get agent instance, instantiating class if needed."""
@@ -435,4 +663,6 @@ class EndToEndPipeline:
             duration_ms=duration,
             blocked_reason=reason,
             error=reason,
+            healing_attempts=0,
+            skills_loaded=[],
         )
