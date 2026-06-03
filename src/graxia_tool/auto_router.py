@@ -1,22 +1,8 @@
-"""Enterprise Agent OS — Auto Router.
-
-Unified auto-router that analyzes a prompt and automatically selects:
-- Skills to load
-- RAG technique to use
-- MCP tools to invoke
-- Subagent to spawn
-- Model tier for the task
-
-No LLM needed for routing decisions — uses fast keyword pattern matching.
-"""
+"""Auto Router — selects skills, RAG, agent, model, MCP tools for each prompt. No LLM needed."""
 from __future__ import annotations
-
-import hashlib
-import re
-import time
+import hashlib, re, time
 from dataclasses import dataclass, field
 from typing import Any, Optional
-
 from .core.intent_router import Intent, Domain, _keyword_classify
 from .core.logging import get_logger
 from .core.model_router import ModelTier, detect_complexity
@@ -104,8 +90,13 @@ RAG_TECHNIQUE_PATTERNS: list[tuple[str, str, str]] = [
     (r"\b(compare|contrast|difference|versus|vs\.?|both|either)\b", "diversity_rag", "diverse perspectives"),
     (r"\b(error|mistake|wrong|incorrect|fix|correct|validate)\b", "corrective_rag", "error correction"),
     (r"\b(code|function|class|def |import |struct |fn |func)\b", "chunk_free_rag", "code-specific"),
-    (r"\b(graph|relationship|entity|connected|network|depend)\b", "graph_rag", "graph relationships"),
-    (r"\b(summarize|overview|tldr|brief|executive)\b", "hybrid_search", "simple factual"),
+    (r"\b(graph|relationship|entity|connected|network|depend|hierarchy)\b", "graph_rag", "graph relationships"),
+    (r"\b(summarize|overview|tldr|brief|executive|condense)\b", "hybrid_search", "simple factual"),
+    (r"\b(rerank|re.?rank|score|relevance|top.?k|best.?match)\b", "cross_encoder_rerank", "precision reranking"),
+    (r"\b(keyword|关键词|exact.?match|term|phrase|bm25|tf.?idf)\b", "keyword_rerank", "keyword-based matching"),
+    (r"\b(context|surrounding|passage|excerpt|window|snippet)\b", "contextual_headers", "context-aware retrieval"),
+    (r"\b(window|sliding|chunk|segment|overlap|passage.?size)\b", "context_window", "context window optimization"),
+    (r"\b(hypothetical|想象|would.?be|could.?be|if.*then|suppose|anticipate)\b", "hypothetical_questions", "hypothetical question generation"),
 ]
 
 DEFAULT_RAG_TECHNIQUE = "hybrid_search"
@@ -128,6 +119,17 @@ INTENT_AGENT_MAP: dict[Intent, str] = {
     Intent.CONVERSATION: "conversational",
     Intent.UNKNOWN: "general",
 }
+
+# Keyword-based agent overrides for agents not directly tied to an Intent
+KEYWORD_AGENT_OVERRIDES: list[tuple[str, str]] = [
+    (r"\b(database|sql|schema|migration|query|postgres|mysql|mongo|redis|sqlite|table|column|index)\b", "database_admin"),
+    (r"\b(network|dns|load.?balanc|firewall|iptables|nginx|proxy|ssl|tls|subnet|vlan|routing)\b", "network_engineer"),
+    (r"\b(frontend|ui|ux|css|html|react|vue|angular|svelte|component|layout|responsive|accessibility|wcag|dom|styling)\b", "frontend_designer"),
+    (r"\b(architect|system.?design|architecture|high.?level|blueprint|topology)\b", "architect"),
+    (r"\b(security|audit|vulnerability|cve|penetration|owasp|threat|encrypt)\b", "security_auditor"),
+    (r"\b(validator|validate|verify|assert|check.?output)\b", "validator"),
+    (r"\b(planner|plan|breakdown|task|sprint|roadmap|milestone)\b", "planner"),
+]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -166,17 +168,7 @@ KEYWORD_MCP_TOOLS: list[tuple[str, list[str]]] = [
 # ─────────────────────────────────────────────────────────────────────────────
 
 class AutoRouter:
-    """Analyzes user prompt and auto-selects skills, RAG, MCP tools, subagents.
-
-    Optionally integrates with SelfLearner for outcome-based routing improvement.
-
-    Usage:
-        router = AutoRouter()
-        decision = router.route("Fix the bug in auth.py that causes 500 errors")
-        print(decision.agent_type)     # "debugger"
-        print(decision.skills)         # ["systematic-debugging", "doubt-driven-development"]
-        print(decision.rag_technique)  # "corrective_rag"
-    """
+    """Analyzes prompt and selects skills, RAG, agent, model tier, MCP tools."""
 
     def __init__(self, self_learner: Any | None = None) -> None:
         self._route_count: int = 0
@@ -225,6 +217,13 @@ class AutoRouter:
 
         # 4. Agent selection (with optional learner override)
         agent_type = INTENT_AGENT_MAP.get(intent, "general")
+
+        # 4a. Keyword-based agent overrides (can override intent-based selection)
+        p_lower = prompt.lower()
+        for pattern, override_agent in KEYWORD_AGENT_OVERRIDES:
+            if re.search(pattern, p_lower):
+                agent_type = override_agent
+                break
 
         # 4b. Check SelfLearner for learned agent preference
         if self._self_learner is not None:

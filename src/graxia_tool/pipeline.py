@@ -12,7 +12,7 @@ from datetime import datetime
 from typing import Any, Optional
 
 from .core.logging import get_logger
-from .core.intent_router import classify_intent, Intent
+from .core.intent_router import Intent
 from .core.orchestrator import Orchestrator
 from .core.output_validator import OutputValidator
 from .core.run_logger import RunLogger
@@ -43,6 +43,25 @@ from .observability.prometheus import (
 )
 
 logger = get_logger(__name__)
+
+
+class _RoutingIntent:
+    """Lightweight intent wrapper from routing decision (avoids duplicate classify_intent)."""
+    def __init__(self, intent_str: str):
+        self.intent = Intent(intent_str) if intent_str in [i.value for i in Intent] else Intent.UNKNOWN
+        self.domain = Domain.GENERAL
+        self.risk_level = _RiskLevel.LOW
+        self.confidence = 0.8
+
+
+class _RiskLevel:
+    LOW = type('', (), {'value': 'low'})()
+    MEDIUM = type('', (), {'value': 'medium'})()
+    HIGH = type('', (), {'value': 'high'})()
+
+
+class Domain:
+    GENERAL = type('', (), {'value': 'general'})()
 
 
 @dataclass
@@ -193,12 +212,10 @@ class EndToEndPipeline:
         _log_stage("skill_hydrate", "pass" if skills_loaded else "skip",
                    skills=skills_loaded, count=len(skills_loaded))
 
-        # Use routing decision to override intent classification
-        # (keep original for governance, but use routing for agent selection)
-        intent = await classify_intent(request.input)
+        # Use routing decision directly (avoids duplicate classify_intent call)
+        intent = _RoutingIntent(routing_decision.intent)
         _log_stage("classify", "pass",
-                   intent=intent.intent.value, domain=intent.domain.value,
-                   risk_level=intent.risk_level.value, confidence=intent.confidence)
+                   intent=routing_decision.intent, confidence=routing_decision.confidence)
 
         # ============================================================
         # Stage 3: Governance Check
@@ -259,12 +276,13 @@ class EndToEndPipeline:
                 )
             _log_stage("route", "pass", agent=agent_name)
 
-            # Build enriched context with skill content and token optimizer
+            # Build enriched context with skill content, token optimizer, and routing context
             enriched_context = {
                 **request.context,
                 "skills_context": skills_context,
                 "routing_decision": request.routing_decision,
                 "token_optimizer": self.token_optimizer,
+                "context_notes": routing_decision.context_notes,
             }
 
             # Execute with auto-healing
@@ -300,10 +318,6 @@ class EndToEndPipeline:
             output = agent_result.output
             record_agent(agent_name, "direct", agent_result.duration_ms / 1000, agent_result.success)
             pattern_used = "direct"
-
-            # Stage 4b: Feedback — mark skills as useful if execution succeeded
-            if agent_result.success and skills_loaded:
-                self._store_skill_feedback(routing_decision, skills_loaded, success=True)
 
         # ============================================================
         # Stage 5: Output Validation
@@ -347,11 +361,14 @@ class EndToEndPipeline:
             intent.intent.value, intent.domain.value, "success", duration / 1000
         )
 
-        # Collect token optimization stats
+        # Collect token optimization stats (only include if non-zero)
         token_opt_stats = self.token_optimizer.get_savings_report()
+        has_token_stats = any(v for v in token_opt_stats.values() if v)
 
         # ============================================================
         # Stage 7: Store in Session Memory + Context Cache
+        # ============================================================
+        # Stage 7: Store results (memory + cache + learner in one pass)
         # ============================================================
         try:
             task_record = TaskRecord(
@@ -367,35 +384,18 @@ class EndToEndPipeline:
                 domain=intent.domain.value,
             )
             self.session_memory.remember_task(task_record)
-        except Exception as e:
-            logger.warning("memory_store_failed", error=str(e))
-
-        try:
             self.context_cache.set(
-                request.input,
-                routing_decision,
+                request.input, routing_decision,
                 {"output": str(output)[:1000], "success": True},
             )
-        except Exception as e:
-            logger.warning("cache_store_failed", error=str(e))
-
-        # ============================================================
-        # Stage 8: Record outcome in SelfLearner
-        # ============================================================
-        if self.self_learner is not None:
-            try:
+            if self.self_learner is not None:
                 self.self_learner.record_outcome(
-                    task={
-                        "intent": routing_decision.intent,
-                        "domain": intent.domain.value,
-                    },
-                    success=True,
-                    agent_used=routing_decision.agent_type,
-                    duration_ms=duration,
-                    skills_used=skills_loaded,
+                    task={"intent": routing_decision.intent, "domain": intent.domain.value},
+                    success=True, agent_used=routing_decision.agent_type,
+                    duration_ms=duration, skills_used=skills_loaded,
                 )
-            except Exception as e:
-                logger.warning("self_learner_record_failed", error=str(e))
+        except Exception as e:
+            logger.warning("store_failed", error=str(e))
 
         return PipelineResponse(
             request_id=request_id,
@@ -411,7 +411,7 @@ class EndToEndPipeline:
             skills_loaded=skills_loaded,
             metadata={
                 "stages_count": len(stages),
-                "token_optimization": token_opt_stats,
+                **({"token_optimization": token_opt_stats} if has_token_stats else {}),
             },
         )
 
@@ -454,29 +454,6 @@ class EndToEndPipeline:
             with open(skill_path, encoding="utf-8", errors="replace") as fh:
                 return fh.read()
         return ""
-
-    def _store_skill_feedback(
-        self,
-        decision: RoutingDecision,
-        skills_loaded: list[str],
-        success: bool,
-    ) -> None:
-        """Record whether hydrated skills contributed to a successful outcome."""
-        if not skills_loaded:
-            return
-        try:
-            entry = {
-                "intent": decision.intent,
-                "skills": skills_loaded,
-                "agent": decision.agent_type,
-                "success": success,
-                "timestamp": datetime.utcnow().isoformat(),
-            }
-            feedback_key = f"skill_feedback:{decision.cache_key}"
-            self.context_cache.set(feedback_key, decision, entry)
-            logger.info("skill_feedback_stored", skills=skills_loaded, success=success)
-        except Exception as e:
-            logger.debug("skill_feedback_failed", error=str(e))
 
     # ── Auto-Healing ─────────────────────────────────────────────────
 

@@ -1,21 +1,4 @@
-"""Agent OS MCP Server — Expose all features as Model Context Protocol tools.
-
-This makes every feature in Enterprise Agent OS available to ANY AI tool that
-supports MCP (Claude Desktop, Cursor, Windsurf, Continue, custom clients, etc.).
-
-Architecture:
-- Tools: Thin wrappers around Agent OS core APIs
-- Transport: stdio (default) + SSE (HTTP for remote)
-- Protocol: MCP 2024-11-05 spec
-- No external deps required (uses built-in asyncio + json)
-
-Usage:
-    # stdio (local Claude Desktop / Cursor)
-    python -m graxia_tool.mcp.server
-
-    # SSE (remote clients)
-    python -m graxia_tool.mcp.server --transport sse --port 8765
-"""
+"""Graxia MCP Server — exposes Agent OS features as MCP tools (stdio/SSE)."""
 from __future__ import annotations
 
 import asyncio
@@ -31,9 +14,7 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 logger = logging.getLogger("graxia_tool.mcp")
 
-# ----------------------------------------------------------------------------
 # Tool registry
-# ----------------------------------------------------------------------------
 
 ToolHandler = Callable[[Dict[str, Any]], Awaitable[Dict[str, Any]]]
 
@@ -77,9 +58,7 @@ class ToolRegistry:
         return [t for t in self._tools.values() if t.category == category]
 
 
-# ----------------------------------------------------------------------------
-# JSON-RPC protocol helpers (MCP uses JSON-RPC 2.0)
-# ----------------------------------------------------------------------------
+# JSON-RPC protocol helpers
 
 def make_result(req_id: Any, result: Any) -> Dict[str, Any]:
     return {"jsonrpc": "2.0", "id": req_id, "result": result}
@@ -92,9 +71,7 @@ def make_error(req_id: Any, code: int, message: str, data: Any = None) -> Dict[s
     return err
 
 
-# ----------------------------------------------------------------------------
-# Tool implementations — wrap Agent OS core APIs
-# ----------------------------------------------------------------------------
+# Tool implementations
 
 def _ok(content: Any) -> Dict[str, Any]:
     """Format a successful tool result as MCP content array."""
@@ -618,9 +595,7 @@ async def _context_cache_stats(args: Dict[str, Any]) -> Dict[str, Any]:
         return _err(f"{type(e).__name__}: {e}")
 
 
-# ----------------------------------------------------------------------------
 # LLM function resolver
-# ----------------------------------------------------------------------------
 
 _LLM_REGISTRY: Dict[str, Any] = {}
 
@@ -634,9 +609,7 @@ def _resolve_llm_func(name: str) -> Optional[Any]:
     return _LLM_REGISTRY.get(name)
 
 
-# ----------------------------------------------------------------------------
-# Build the default tool registry
-# ----------------------------------------------------------------------------
+# Build default tool registry
 
 _START_TIME = time.time()
 
@@ -648,15 +621,15 @@ def build_default_registry() -> ToolRegistry:
     # Agent OS core
     reg.register(Tool(
         name="agent_run",
-        description="Run a sub-agent (coder, reviewer, debugger, tester, etc.) on a query. Returns the agent's output, tokens used, and cost.",
+        description="Run a sub-agent on a query.",
         input_schema={
             "type": "object",
             "properties": {
-                "agent_name": {"type": "string", "description": "Name of the agent: coder, debugger, tester, reviewer, deployer, documenter, researcher, data_engineer, sysadmin, conversational, general, validator, planner, architect, security_auditor"},
-                "agent": {"type": "string", "description": "Alias for agent_name (use either)"},
-                "query": {"type": "string", "description": "The query / task to run"},
-                "context": {"type": "object", "description": "Optional context dict"},
-                "llm_func": {"type": "string", "description": "Optional name of registered LLM function"},
+                "agent_name": {"type": "string", "description": "Agent name"},
+                "agent": {"type": "string", "description": "Alias for agent_name"},
+                "query": {"type": "string", "description": "Task to run"},
+                "context": {"type": "object", "description": "Optional context"},
+                "llm_func": {"type": "string", "description": "Optional LLM function name"},
             },
             "required": ["query"],
         },
@@ -666,7 +639,7 @@ def build_default_registry() -> ToolRegistry:
 
     reg.register(Tool(
         name="agent_list",
-        description="List all available sub-agents with their capabilities.",
+        description="List available sub-agents.",
         input_schema={"type": "object", "properties": {}},
         handler=_agent_list,
         category="agents",
@@ -674,13 +647,13 @@ def build_default_registry() -> ToolRegistry:
 
     reg.register(Tool(
         name="pipeline_run",
-        description="Run the full end-to-end pipeline: input guard → classify → governance → route → execute → validate → log. Returns the final output and stage log.",
+        description="Run full pipeline: guard → route → execute → validate → log.",
         input_schema={
             "type": "object",
             "properties": {
                 "query": {"type": "string"},
                 "user_id": {"type": "string", "default": "default"},
-                "pattern": {"type": "string", "description": "Optional multi-agent pattern: pipeline, supervisor, parallel, hierarchical, debate, consensus, marketplace"},
+                "pattern": {"type": "string", "description": "Multi-agent pattern"},
             },
             "required": ["query"],
         },
@@ -690,7 +663,7 @@ def build_default_registry() -> ToolRegistry:
 
     reg.register(Tool(
         name="multi_agent_run",
-        description="Run one of 7 multi-agent coordination patterns (pipeline, supervisor, parallel, hierarchical, debate, consensus, marketplace).",
+        description="Run a multi-agent coordination pattern.",
         input_schema={
             "type": "object",
             "properties": {
@@ -704,10 +677,9 @@ def build_default_registry() -> ToolRegistry:
         category="multi_agent",
     ))
 
-    # Guardrails
     reg.register(Tool(
         name="guard_check",
-        description="Run input or output guardrail checks (PII redaction, injection detection, harmful content filter).",
+        description="Run input/output guardrail checks.",
         input_schema={
             "type": "object",
             "properties": {
@@ -720,10 +692,9 @@ def build_default_registry() -> ToolRegistry:
         category="guardrails",
     ))
 
-    # Memory + RAG
     reg.register(Tool(
         name="memory_search",
-        description="Search across memory layers (working, episodic, semantic, procedural, LTM, STM, RAG, Graph).",
+        description="Search memory layers.",
         input_schema={
             "type": "object",
             "properties": {
@@ -739,7 +710,7 @@ def build_default_registry() -> ToolRegistry:
 
     reg.register(Tool(
         name="rag_query",
-        description="Query the RAG system for relevant documents.",
+        description="Query RAG for relevant documents.",
         input_schema={
             "type": "object",
             "properties": {
@@ -907,7 +878,7 @@ def build_default_registry() -> ToolRegistry:
 
     # Vault auto-system tools (from auto_tools module)
     from .auto_tools import (
-        vault_auto_link, vault_auto_tag, vault_auto_classify,
+        vault_run_auto_link, vault_run_auto_tag, vault_auto_classify,
         vault_auto_find_duplicates, vault_auto_check_consistency,
         vault_auto_extract_tasks,
     )
@@ -996,33 +967,35 @@ def build_default_registry() -> ToolRegistry:
 
     reg.register(Tool(
         name="vault_auto_link",
-        description="Auto-link orphaned notes by finding title-word overlaps. Use dry_run=true to preview without changes.",
+        description="Auto-link orphaned notes by title-word overlap.",
         input_schema={
             "type": "object",
             "properties": {
                 "dry_run": {"type": "boolean", "default": False},
+                "max_files": {"type": "integer", "default": 50},
             },
         },
-        handler=vault_auto_link,
+        handler=vault_run_auto_link,
         category="vault",
     ))
 
     reg.register(Tool(
         name="vault_auto_tag",
-        description="Auto-tag notes by analyzing content against tag rules. Use dry_run=true to preview without changes.",
+        description="Auto-tag notes by content analysis.",
         input_schema={
             "type": "object",
             "properties": {
                 "dry_run": {"type": "boolean", "default": False},
+                "max_files": {"type": "integer", "default": 200},
             },
         },
-        handler=vault_auto_tag,
+        handler=vault_run_auto_tag,
         category="vault",
     ))
 
     reg.register(Tool(
         name="vault_auto_classify",
-        description="Classify unclassified notes (00-Inbox, root) into PARA structure. Use dry_run=true to preview without changes.",
+        description="Classify notes into PARA structure.",
         input_schema={
             "type": "object",
             "properties": {
@@ -1036,7 +1009,7 @@ def build_default_registry() -> ToolRegistry:
 
     reg.register(Tool(
         name="vault_auto_find_duplicates",
-        description="Find exact duplicate files (same content hash) and notes with similar names.",
+        description="Find duplicate files and similar notes.",
         input_schema={
             "type": "object",
             "properties": {
@@ -1049,7 +1022,7 @@ def build_default_registry() -> ToolRegistry:
 
     reg.register(Tool(
         name="vault_auto_check_consistency",
-        description="Check vault integrity: broken wiki-links, empty files, orphaned images, missing frontmatter.",
+        description="Check vault integrity: broken links, empty files.",
         input_schema={
             "type": "object",
             "properties": {
@@ -1062,7 +1035,7 @@ def build_default_registry() -> ToolRegistry:
 
     reg.register(Tool(
         name="vault_auto_extract_tasks",
-        description="Extract all TODOs, FIXMEs, checkboxes, and action items from vault notes.",
+        description="Extract TODOs, FIXMEs, and action items.",
         input_schema={
             "type": "object",
             "properties": {
@@ -1080,7 +1053,7 @@ def build_default_registry() -> ToolRegistry:
 
     reg.register(Tool(
         name="token_optimize",
-        description="Optimize a command or text for token savings using RTK, lean-ctx, or Thai Token Optimizer.",
+        description="Optimize text for token savings (RTK/lean-ctx/TTO).",
         input_schema={
             "type": "object",
             "properties": {
@@ -1100,7 +1073,7 @@ def build_default_registry() -> ToolRegistry:
 
     reg.register(Tool(
         name="token_report",
-        description="Get token savings statistics from the optimization stack (RTK + lean-ctx + TTO).",
+        description="Get token savings statistics.",
         input_schema={"type": "object", "properties": {}},
         handler=token_report,
         category="optimization",
@@ -1108,7 +1081,7 @@ def build_default_registry() -> ToolRegistry:
 
     reg.register(Tool(
         name="token_thai",
-        description="Optimize Thai text for token savings using the Thai Token Optimizer.",
+        description="Optimize Thai text for token savings.",
         input_schema={
             "type": "object",
             "properties": {
@@ -1144,10 +1117,10 @@ def build_default_registry() -> ToolRegistry:
             category=tool_def.get("category", "learning"),
         ))
 
-    # Auto-router, session memory, context cache
+    # Auto-router, memory, cache tools
     reg.register(Tool(
         name="auto_route",
-        description="Auto-route a prompt: returns optimal skills, RAG technique, agent, model tier, and MCP tools.",
+        description="Route a prompt to optimal skills/RAG/agent/model/tools.",
         input_schema={
             "type": "object",
             "properties": {
@@ -1161,7 +1134,7 @@ def build_default_registry() -> ToolRegistry:
 
     reg.register(Tool(
         name="memory_recall",
-        description="Recall relevant memories (tasks, codebase knowledge, preferences) for a query using BM25 keyword matching.",
+        description="Recall memories by BM25 keyword matching.",
         input_schema={
             "type": "object",
             "properties": {
@@ -1202,7 +1175,7 @@ def build_default_registry() -> ToolRegistry:
 
     reg.register(Tool(
         name="context_cache_get",
-        description="Get cached context (routing decision + result) for a prompt via semantic keyword matching.",
+        description="Get cached routing decision for a prompt.",
         input_schema={
             "type": "object",
             "properties": {
@@ -1216,7 +1189,7 @@ def build_default_registry() -> ToolRegistry:
 
     reg.register(Tool(
         name="context_cache_stats",
-        description="Get context cache statistics: hit rate, entry counts, expired entries.",
+        description="Context cache hit rate and entry counts.",
         input_schema={"type": "object", "properties": {}},
         handler=_context_cache_stats,
         category="cache",
@@ -1225,9 +1198,7 @@ def build_default_registry() -> ToolRegistry:
     return reg
 
 
-# ----------------------------------------------------------------------------
 # JSON-RPC dispatcher
-# ----------------------------------------------------------------------------
 
 class MCPServer:
     """Minimal MCP server implementation using stdio or SSE."""

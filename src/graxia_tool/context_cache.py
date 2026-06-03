@@ -1,34 +1,13 @@
-"""Enterprise Agent OS — Context Cache.
-
-Semantic context cache that avoids re-computation by storing and matching
-compiled routing decisions and their results.
-
-Features:
-- SQLite backend with prompt hash + keywords for matching
-- BM25 keyword overlap for semantic similarity (no ML deps)
-- TTL-based expiry for cached contexts
-- Codebase snapshots for file structure understanding
-- Hit tracking for cache performance metrics
-"""
+"""Enterprise Agent OS — Context Cache. Semantic cache with BM25 keyword matching."""
 from __future__ import annotations
-
-import hashlib
-import json
-import re
-import sqlite3
-import time
-from dataclasses import dataclass, field, asdict
+import hashlib, json, re, sqlite3
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any, Optional
-
 from .core.logging import get_logger
+from .shared.bm25 import bm25_overlap, extract_keywords
 
 logger = get_logger("context_cache")
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Data classes
-# ─────────────────────────────────────────────────────────────────────────────
 
 @dataclass
 class CachedContext:
@@ -80,38 +59,18 @@ class CodebaseSnapshot:
             self.created_at = datetime.utcnow().isoformat()
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Helpers
-# ─────────────────────────────────────────────────────────────────────────────
-
+# Helpers now imported from shared.bm25: bm25_overlap, extract_keywords
+# Keep local aliases for backward compat with CachedContext.__post_init__
 def _hash_prompt(prompt: str) -> str:
-    """Generate deterministic hash for a prompt."""
     normalized = re.sub(r"\s+", " ", prompt.strip().lower())
     return hashlib.sha256(normalized.encode()).hexdigest()[:16]
 
-
+# Re-export for any code referencing these directly
 def _extract_keywords(text: str) -> list[str]:
-    """Extract meaningful keywords from text for BM25 matching."""
-    stop_words = {
-        "the", "a", "an", "is", "are", "was", "were", "be", "been", "being",
-        "have", "has", "had", "do", "does", "did", "will", "would", "could",
-        "should", "may", "might", "can", "shall", "to", "of", "in", "for",
-        "on", "with", "at", "by", "from", "as", "into", "about", "this",
-        "that", "these", "those", "it", "its", "i", "me", "my", "we", "our",
-        "you", "your", "he", "she", "they", "them", "and", "or", "but", "not",
-        "if", "then", "else", "when", "up", "out", "so", "no", "just",
-    }
-    words = re.findall(r"[a-z0-9_]+", text.lower())
-    return [w for w in words if w not in stop_words and len(w) > 2]
-
+    return extract_keywords(text)
 
 def _bm25_overlap(kw1: list[str], kw2: list[str]) -> float:
-    """Compute BM25-inspired overlap between two keyword sets."""
-    if not kw1 or not kw2:
-        return 0.0
-    set2 = set(kw2)
-    matches = sum(1 for w in kw1 if w in set2)
-    return matches / max(len(kw1), 1)
+    return bm25_overlap(kw1, kw2)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

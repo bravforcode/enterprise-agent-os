@@ -1,33 +1,10 @@
-"""Enterprise Agent OS — Session Memory.
-
-Persistent memory for task outcomes, codebase knowledge, and user preferences.
-SQLite-backed for simplicity — no Redis/Postgres needed.
-
-Features:
-- Task memory: store prompt, routing decision, outcome, duration, tokens
-- Codebase knowledge: file understanding, patterns, architecture decisions
-- Preference memory: user preferences (terse mode, language, etc.)
-- BM25 recall: keyword-based relevance scoring
-- Recency boost: recent memories ranked higher
-- Auto-cleanup: old memories decay over time
-"""
+"""Enterprise Agent OS — Session Memory. SQLite-backed. BM25 keyword recall with recency boost."""
 from __future__ import annotations
-
-import hashlib
-import json
-import math
-import re
-import sqlite3
-import time
-import uuid
-from dataclasses import dataclass, field, asdict
+import hashlib, json, sqlite3, uuid
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any, Optional
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Data classes
-# ─────────────────────────────────────────────────────────────────────────────
+from .shared.bm25 import bm25_score
 
 @dataclass
 class TaskRecord:
@@ -479,30 +456,7 @@ class SessionMemory:
         return results[:limit]
 
     def _bm25_score(self, query_words: list[str], text: str) -> float:
-        """Simple BM25-inspired scoring.
-
-        Uses keyword overlap with length normalization.
-        No IDF weighting (keeps it simple without a corpus).
-        """
-        if not query_words or not text:
-            return 0.0
-
-        text_lower = text.lower()
-        text_words = text_lower.split()
-        text_len = max(len(text_words), 1)
-
-        # Term frequency with saturation
-        score = 0.0
-        for word in query_words:
-            tf = text_lower.count(word)
-            if tf > 0:
-                # BM25 saturation: tf / (tf + k1)
-                saturated = tf / (tf + 1.5)
-                # Length penalty
-                length_penalty = 1.0 / (1.0 + 0.5 * (text_len / 100))
-                score += saturated * length_penalty
-
-        return score / max(len(query_words), 1)
+        return bm25_score(query_words, text)
 
     # ── Session summary ──────────────────────────────────────────────────
 

@@ -1,30 +1,15 @@
 """Auto-system MCP tools — thin wrappers around vault auto-systems core logic."""
 from __future__ import annotations
-
-import json
 from typing import Any, Dict
-
+from ..shared.helpers import _ok, _err
 from ..vault.auto_systems import (
-    VaultAutoLinker,
-    VaultAutoTagger,
-    VaultAutoClassifier,
-    VaultAutoDuplicateFinder,
-    VaultAutoConsistencyChecker,
-    VaultAutoTaskExtractor,
+    VaultAutoLinker, VaultAutoTagger, VaultAutoClassifier,
+    VaultAutoDuplicateFinder, VaultAutoConsistencyChecker, VaultAutoTaskExtractor,
 )
 
 
-def _ok(content: Any) -> Dict[str, Any]:
-    text = content if isinstance(content, str) else json.dumps(content, default=str, indent=2)
-    return {"content": [{"type": "text", "text": text}]}
-
-
-def _err(message: str) -> Dict[str, Any]:
-    return {"content": [{"type": "text", "text": f"ERROR: {message}"}], "isError": True}
-
-
-async def vault_auto_link(args: Dict[str, Any]) -> Dict[str, Any]:
-    """Find orphaned notes and create links."""
+async def vault_run_auto_link(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Find orphaned notes and create links (auto-system version)."""
     dry_run = args.get("dry_run", False)
     max_files = int(args.get("max_files", 50))
     try:
@@ -35,8 +20,8 @@ async def vault_auto_link(args: Dict[str, Any]) -> Dict[str, Any]:
         return _err(f"{type(e).__name__}: {e}")
 
 
-async def vault_auto_tag(args: Dict[str, Any]) -> Dict[str, Any]:
-    """Analyze content and add tags."""
+async def vault_run_auto_tag(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Analyze content and add tags (auto-system version)."""
     dry_run = args.get("dry_run", False)
     max_files = int(args.get("max_files", 200))
     try:

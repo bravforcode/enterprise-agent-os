@@ -1,29 +1,9 @@
-"""MCP tools for vault-memory sync integration.
-
-Exposes VaultMemorySync as MCP tools:
-- memory_vault_sync_task: sync a task to vault
-- memory_vault_sync_all: sync all unsynced tasks
-- memory_vault_search: search vault for task knowledge
-- memory_vault_pull: pull a task note from vault
-- memory_vault_list: list synced tasks
-- memory_vault_moc: generate tasks Map of Content
-"""
+"""MCP tools for vault-memory sync integration."""
 from __future__ import annotations
-
 import asyncio
-import json
 from typing import Any, Dict
-
+from ..shared.helpers import _ok, _err
 from ..memory.vault_sync import VaultMemorySync
-
-
-def _ok(content: Any) -> Dict[str, Any]:
-    text = content if isinstance(content, str) else json.dumps(content, default=str, indent=2)
-    return {"content": [{"type": "text", "text": text}]}
-
-
-def _err(message: str) -> Dict[str, Any]:
-    return {"content": [{"type": "text", "text": f"ERROR: {message}"}], "isError": True}
 
 
 # ---------------------------------------------------------------------------
@@ -187,19 +167,19 @@ async def memory_vault_moc(args: Dict[str, Any]) -> Dict[str, Any]:
 MEMORY_VAULT_TOOLS = [
     {
         "name": "memory_vault_sync_task",
-        "description": "Sync a task outcome from SessionMemory to the Obsidian vault as a structured markdown note.",
+        "description": "Sync a task to vault as markdown note.",
         "input_schema": {
             "type": "object",
             "properties": {
-                "task_id": {"type": "string", "description": "Unique task identifier"},
-                "prompt": {"type": "string", "description": "The original task prompt"},
+                "task_id": {"type": "string"},
+                "prompt": {"type": "string"},
                 "success": {"type": "boolean", "default": True},
-                "agent_type": {"type": "string", "description": "Agent that executed the task"},
-                "outcome": {"type": "string", "description": "Task outcome / result text"},
-                "intent": {"type": "string", "description": "Classified intent"},
-                "domain": {"type": "string", "description": "Domain classification"},
-                "duration_ms": {"type": "number", "description": "Execution time in ms"},
-                "tokens_used": {"type": "integer", "description": "Total tokens consumed"},
+                "agent_type": {"type": "string"},
+                "outcome": {"type": "string"},
+                "intent": {"type": "string"},
+                "domain": {"type": "string"},
+                "duration_ms": {"type": "number"},
+                "tokens_used": {"type": "integer"},
             },
             "required": ["task_id", "prompt"],
         },
@@ -208,11 +188,11 @@ MEMORY_VAULT_TOOLS = [
     },
     {
         "name": "memory_vault_sync_all",
-        "description": "Sync all unsynced tasks from SessionMemory to the vault. Skips already-synced notes.",
+        "description": "Sync all unsynced tasks to vault.",
         "input_schema": {
             "type": "object",
             "properties": {
-                "limit": {"type": "integer", "default": 50, "description": "Max tasks to sync"},
+                "limit": {"type": "integer", "default": 50},
             },
         },
         "handler": memory_vault_sync_all,
@@ -220,11 +200,11 @@ MEMORY_VAULT_TOOLS = [
     },
     {
         "name": "memory_vault_search",
-        "description": "Search vault task notes for relevant knowledge. Returns scored results with snippets.",
+        "description": "Search vault task notes.",
         "input_schema": {
             "type": "object",
             "properties": {
-                "query": {"type": "string", "description": "Search query"},
+                "query": {"type": "string"},
                 "limit": {"type": "integer", "default": 10},
             },
             "required": ["query"],
@@ -234,11 +214,11 @@ MEMORY_VAULT_TOOLS = [
     },
     {
         "name": "memory_vault_pull",
-        "description": "Pull a task note from vault and return parsed structured data (task_id, agent, success, etc.).",
+        "description": "Pull and parse a task note from vault.",
         "input_schema": {
             "type": "object",
             "properties": {
-                "vault_path": {"type": "string", "description": "Vault-relative path to the note"},
+                "vault_path": {"type": "string"},
             },
             "required": ["vault_path"],
         },
@@ -247,11 +227,11 @@ MEMORY_VAULT_TOOLS = [
     },
     {
         "name": "memory_vault_list",
-        "description": "List recently synced task notes from the vault.",
+        "description": "List synced task notes.",
         "input_schema": {
             "type": "object",
             "properties": {
-                "days": {"type": "integer", "default": 30, "description": "Only list tasks from last N days"},
+                "days": {"type": "integer", "default": 30},
             },
         },
         "handler": memory_vault_list,
@@ -259,7 +239,7 @@ MEMORY_VAULT_TOOLS = [
     },
     {
         "name": "memory_vault_moc",
-        "description": "Generate a Map of Content (MOC) note linking all synced tasks in the vault.",
+        "description": "Generate MOC for synced tasks.",
         "input_schema": {"type": "object", "properties": {}},
         "handler": memory_vault_moc,
         "category": "memory",

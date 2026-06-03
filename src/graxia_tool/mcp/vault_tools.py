@@ -1,32 +1,16 @@
 """Vault tools for Graxia MCP server — 9 Obsidian vault tools."""
 from __future__ import annotations
-
-import asyncio
-import os
-import re
+import asyncio, os, re
 from pathlib import Path
 from typing import Any, Dict, List
-
+from ..shared.helpers import _ok, _err
 from ..integrations.obsidian import ObsidianBridge
 
-VAULT_PATH = Path(os.environ.get(
-    "AGENT_OS_VAULT_PATH",
-    r"C:\Users\menum\Documents\ObsidianVault\Second Brain",
-))
+VAULT_PATH = Path(os.environ.get("AGENT_OS_VAULT_PATH", r"C:\Users\menum\Documents\ObsidianVault\Second Brain"))
 
 
 def _bridge() -> ObsidianBridge:
     return ObsidianBridge()
-
-
-def _ok(content: Any) -> Dict[str, Any]:
-    import json
-    text = content if isinstance(content, str) else json.dumps(content, default=str, indent=2)
-    return {"content": [{"type": "text", "text": text}]}
-
-
-def _err(message: str) -> Dict[str, Any]:
-    return {"content": [{"type": "text", "text": f"ERROR: {message}"}], "isError": True}
 
 
 def _vault_rel(path: str) -> Path:
