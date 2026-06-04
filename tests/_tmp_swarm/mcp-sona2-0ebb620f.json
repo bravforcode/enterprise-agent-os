@@ -1,0 +1,14 @@
+{
+  "test": {
+    "tester": {
+      "agent": "tester",
+      "samples": 3,
+      "successes": 3,
+      "failures": 0,
+      "ema_fast": 0.892,
+      "ema_slow": 0.5713,
+      "avg_duration_ms": 5.0,
+      "score": 0.8915
+    }
+  }
+}
