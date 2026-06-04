@@ -309,9 +309,35 @@ async def graxia_memory_ext_handler(args: Dict[str, Any]) -> Dict[str, Any]:
         from .learning_tools import learning_reset
         return await learning_reset(args)
 
+    # Qwen-powered memory operations
+    elif action == "summarize":
+        from .qwen_memory_tools import _qwen_summarize
+        return await _qwen_summarize(args)
+
+    elif action == "rerank":
+        from .qwen_memory_tools import _qwen_rerank
+        return await _qwen_rerank(args)
+
+    elif action == "categorize":
+        from .qwen_memory_tools import _qwen_categorize
+        return await _qwen_categorize(args)
+
+    elif action == "compress":
+        from .qwen_memory_tools import _qwen_compress
+        return await _qwen_compress(args)
+
+    elif action == "merge":
+        from .qwen_memory_tools import _qwen_merge
+        return await _qwen_merge(args)
+
+    elif action == "qwen_status":
+        from .qwen_memory_tools import _qwen_status
+        return await _qwen_status(args)
+
     return _err(f"Unknown action: {action}. Use: learn, list_skills, recall, get_skill, delete_skill, "
                 "vault_sync_task, vault_sync_all, vault_search, vault_pull, vault_list, vault_moc, "
-                "learning_stats, learning_suggest, learning_record, learning_reset")
+                "learning_stats, learning_suggest, learning_record, learning_reset, "
+                "summarize, rerank, categorize, compress, merge, qwen_status")
 
 
 GRAXIA_MEMORY_EXT_SCHEMA = {
@@ -323,6 +349,7 @@ GRAXIA_MEMORY_EXT_SCHEMA = {
                 "learn", "list_skills", "recall", "get_skill", "delete_skill",
                 "vault_sync_task", "vault_sync_all", "vault_search", "vault_pull", "vault_list", "vault_moc",
                 "learning_stats", "learning_suggest", "learning_record", "learning_reset",
+                "summarize", "rerank", "categorize", "compress", "merge", "qwen_status",
             ],
             "description": "Sub-action to perform.",
         },
