@@ -639,26 +639,8 @@ def build_default_registry() -> ToolRegistry:
     reg = ToolRegistry()
 
     # =========================================================================
-    # 15 high-frequency standalone tools
+    # Essential standalone tools
     # =========================================================================
-
-    reg.register(Tool(
-        name="agent_run",
-        description="Run a sub-agent on a query.",
-        input_schema={
-            "type": "object",
-            "properties": {
-                "agent_name": {"type": "string", "description": "Agent name"},
-                "agent": {"type": "string", "description": "Alias for agent_name"},
-                "query": {"type": "string", "description": "Task to run"},
-                "context": {"type": "object", "description": "Optional context"},
-                "llm_func": {"type": "string", "description": "Optional LLM function name"},
-            },
-            "required": ["query"],
-        },
-        handler=_agent_run,
-        category="agents",
-    ))
 
     reg.register(Tool(
         name="agent_list",
@@ -666,38 +648,6 @@ def build_default_registry() -> ToolRegistry:
         input_schema={"type": "object", "properties": {}},
         handler=_agent_list,
         category="agents",
-    ))
-
-    reg.register(Tool(
-        name="pipeline_run",
-        description="Run full pipeline: guard → route → execute → validate → log.",
-        input_schema={
-            "type": "object",
-            "properties": {
-                "query": {"type": "string"},
-                "user_id": {"type": "string", "default": "default"},
-                "pattern": {"type": "string", "description": "Multi-agent pattern"},
-            },
-            "required": ["query"],
-        },
-        handler=_pipeline_run,
-        category="pipeline",
-    ))
-
-    reg.register(Tool(
-        name="multi_agent_run",
-        description="Run a multi-agent coordination pattern.",
-        input_schema={
-            "type": "object",
-            "properties": {
-                "pattern": {"type": "string", "default": "pipeline"},
-                "query": {"type": "string"},
-                "agents": {"type": "array", "items": {"type": "string"}},
-            },
-            "required": ["pattern", "query"],
-        },
-        handler=_multi_agent_run,
-        category="multi_agent",
     ))
 
     reg.register(Tool(
@@ -735,22 +685,6 @@ def build_default_registry() -> ToolRegistry:
         },
         handler=_guard_check,
         category="guardrails",
-    ))
-
-    reg.register(Tool(
-        name="memory_search",
-        description="Search memory layers.",
-        input_schema={
-            "type": "object",
-            "properties": {
-                "query": {"type": "string"},
-                "layers": {"type": "array", "items": {"type": "string"}},
-                "limit": {"type": "integer", "default": 5},
-            },
-            "required": ["query"],
-        },
-        handler=_memory_search,
-        category="memory",
     ))
 
     reg.register(Tool(
@@ -850,20 +784,6 @@ def build_default_registry() -> ToolRegistry:
         category="cost",
     ))
 
-    reg.register(Tool(
-        name="context_cache_get",
-        description="Get cached routing decision for a prompt.",
-        input_schema={
-            "type": "object",
-            "properties": {
-                "prompt": {"type": "string", "description": "The prompt to look up"},
-            },
-            "required": ["prompt"],
-        },
-        handler=_context_cache_get,
-        category="cache",
-    ))
-
     # =========================================================================
     # 8 merged super-tools (replace 46 individual tools)
     # =========================================================================
@@ -880,105 +800,132 @@ def build_default_registry() -> ToolRegistry:
         ))
 
     # =========================================================================
-    # 2 additional kept tools (governance_check moved to governance module)
+    # Governance (merged: check + audit + filter)
     # =========================================================================
 
+    from .governance import governance_check_handler, governance_audit_query, governance_audit_stats, governance_content_filter
+
+    async def _governance_merged(args: Dict[str, Any]) -> Dict[str, Any]:
+        action = args.get("action", "check")
+        if action == "audit":
+            return await governance_audit_query(args)
+        elif action == "stats":
+            return await governance_audit_stats(args)
+        elif action == "filter":
+            return await governance_content_filter(args)
+        return await governance_check_handler(args)
+
     reg.register(Tool(
-        name="eval_run",
-        description="Run regression eval on an agent against a golden dataset.",
+        name="governance_check",
+        description="Safety: check tool calls, audit trail, content filter. action: check|audit|stats|filter",
         input_schema={
             "type": "object",
             "properties": {
-                "dataset_name": {"type": "string", "default": "qa"},
-                "agent_name": {"type": "string", "default": "general"},
+                "action": {"type": "string", "enum": ["check", "audit", "stats", "filter"], "default": "check"},
+                "tool_name": {"type": "string"},
+                "text": {"type": "string"},
+                "action": {"type": "string"},
             },
         },
-        handler=_eval_run,
-        category="eval",
+        handler=_governance_merged,
+        category="governance",
     ))
+
+    # =========================================================================
+    # Workflows (merged: chain/parallel/router/orchestrator/evaluator)
+    # =========================================================================
+
+    from .workflows import workflow_chain_handler, workflow_parallel_handler, workflow_router_handler, workflow_orchestrator_handler, workflow_evaluator_optimizer_handler
+
+    async def _workflow_merged(args: Dict[str, Any]) -> Dict[str, Any]:
+        pattern = args.get("pattern", "chain")
+        if pattern == "parallel":
+            return await workflow_parallel_handler(args)
+        elif pattern == "router":
+            return await workflow_router_handler(args)
+        elif pattern == "orchestrator":
+            return await workflow_orchestrator_handler(args)
+        elif pattern == "evaluator":
+            return await workflow_evaluator_optimizer_handler(args)
+        return await workflow_chain_handler(args)
 
     reg.register(Tool(
-        name="context_cache_stats",
-        description="Context cache hit rate and entry counts.",
-        input_schema={"type": "object", "properties": {}},
-        handler=_context_cache_stats,
-        category="cache",
+        name="workflow_run",
+        description="Multi-agent workflows. pattern: chain|parallel|router|orchestrator|evaluator",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "pattern": {"type": "string", "enum": ["chain", "parallel", "router", "orchestrator", "evaluator"], "default": "chain"},
+                "agents": {"type": "array", "items": {"type": "string"}},
+                "query": {"type": "string"},
+                "goal": {"type": "string"},
+            },
+            "required": ["pattern", "query"],
+        },
+        handler=_workflow_merged,
+        category="workflow",
     ))
 
     # =========================================================================
-    # Governance tools (content filters + audit trail)
+    # Hybrid RAG (merged: search + rerank + stats)
     # =========================================================================
 
-    from .governance import GOVERNANCE_TOOL_SPECS
+    from .hybrid_rag import hybrid_search_handler, hybrid_rerank_handler, hybrid_stats_handler
 
-    for tool_def in GOVERNANCE_TOOL_SPECS:
-        reg.register(Tool(
-            name=tool_def["name"],
-            description=tool_def["description"],
-            input_schema=tool_def["input_schema"],
-            handler=tool_def["handler"],
-            category=tool_def.get("category", "governance"),
-        ))
+    async def _hybrid_rag_merged(args: Dict[str, Any]) -> Dict[str, Any]:
+        action = args.get("action", "search")
+        if action == "rerank":
+            return await hybrid_rerank_handler(args)
+        elif action == "stats":
+            return await hybrid_stats_handler(args)
+        return await hybrid_search_handler(args)
 
-    # =========================================================================
-    # Declarative workflow tools
-    # =========================================================================
-
-    from .workflows import WORKFLOW_TOOL_SPECS
-
-    for tool_def in WORKFLOW_TOOL_SPECS:
-        reg.register(Tool(
-            name=tool_def["name"],
-            description=tool_def["description"],
-            input_schema=tool_def["input_schema"],
-            handler=tool_def["handler"],
-            category=tool_def.get("category", "workflow"),
-        ))
-
-    # =========================================================================
-    # Hybrid RAG tools
-    # =========================================================================
-
-    from .hybrid_rag import HYBRID_RAG_TOOLS
-
-    for tool_def in HYBRID_RAG_TOOLS:
-        reg.register(Tool(
-            name=tool_def["name"],
-            description=tool_def["description"],
-            input_schema=tool_def["input_schema"],
-            handler=tool_def["handler"],
-            category=tool_def.get("category", "rag"),
-        ))
+    reg.register(Tool(
+        name="hybrid_rag_search",
+        description="Hybrid search: BM25+vector+rerank. action: search|rerank|stats",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "action": {"type": "string", "enum": ["search", "rerank", "stats"], "default": "search"},
+                "query": {"type": "string"},
+                "top_k": {"type": "integer", "default": 5},
+                "mode": {"type": "string", "enum": ["semantic", "graph", "balanced"], "default": "balanced"},
+            },
+            "required": ["query"],
+        },
+        handler=_hybrid_rag_merged,
+        category="rag",
+    ))
 
     # =========================================================================
-    # Progressive Skill Loader tools (metadata-first)
+    # Incremental Sync (merged: task + all + status + trigger)
     # =========================================================================
 
-    from .skill_loader import SKILL_LOADER_TOOLS
+    from .incremental_sync import incremental_sync_task, incremental_sync_all, incremental_sync_status, incremental_sync_trigger
 
-    for tool_def in SKILL_LOADER_TOOLS:
-        reg.register(Tool(
-            name=tool_def["name"],
-            description=tool_def["description"],
-            input_schema=tool_def["input_schema"],
-            handler=tool_def["handler"],
-            category=tool_def.get("category", "skills"),
-        ))
+    async def _sync_merged(args: Dict[str, Any]) -> Dict[str, Any]:
+        action = args.get("action", "status")
+        if action == "task":
+            return await incremental_sync_task(args)
+        elif action == "all":
+            return await incremental_sync_all(args)
+        elif action == "trigger":
+            return await incremental_sync_trigger(args)
+        return await incremental_sync_status(args)
 
-    # =========================================================================
-    # Incremental Sync tools (Merkle tree-based)
-    # =========================================================================
-
-    from .incremental_sync import INCREMENTAL_SYNC_TOOLS
-
-    for tool_def in INCREMENTAL_SYNC_TOOLS:
-        reg.register(Tool(
-            name=tool_def["name"],
-            description=tool_def["description"],
-            input_schema=tool_def["input_schema"],
-            handler=tool_def["handler"],
-            category=tool_def.get("category", "sync"),
-        ))
+    reg.register(Tool(
+        name="incremental_sync",
+        description="Merkle sync: incremental updates. action: status|task|all|trigger",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "action": {"type": "string", "enum": ["status", "task", "all", "trigger"], "default": "status"},
+                "task_id": {"type": "string"},
+            },
+        },
+        handler=_sync_merged,
+        category="sync",
+    ))
 
     return reg
 

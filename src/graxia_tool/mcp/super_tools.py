@@ -670,32 +670,11 @@ SUPER_TOOLS = [
         "category": "vault",
     },
     {
-        "name": "graxia_vault_auto",
-        "description": "Vault automation — actions: analytics, auto_link, auto_tag, auto_classify, find_duplicates, check_consistency, extract_tasks.",
-        "input_schema": GRAXIA_VAULT_AUTO_SCHEMA,
-        "handler": graxia_vault_auto_handler,
-        "category": "vault",
-    },
-    {
         "name": "graxia_memory_ext",
         "description": "MANDATORY FOR MEMORY: Extended memory — actions: learn (distill session), recall (search past), vault_sync (sync knowledge), learning_stats (track progress). Auto-triggers on: every task completion, research, code discovery.",
         "input_schema": GRAXIA_MEMORY_EXT_SCHEMA,
         "handler": graxia_memory_ext_handler,
         "category": "acontext",
-    },
-    {
-        "name": "graxia_swarm",
-        "description": "Swarm orchestration — actions: init, run, status, federation_init, federation_send, federation_list_peers, sona_record, sona_suggest, sona_stats.",
-        "input_schema": GRAXIA_SWARM_SCHEMA,
-        "handler": graxia_swarm_handler,
-        "category": "swarm",
-    },
-    {
-        "name": "graxia_autonomous",
-        "description": "Autonomous mode — actions: load, save, update, plan, run, status, list_runs.",
-        "input_schema": GRAXIA_AUTONOMOUS_SCHEMA,
-        "handler": graxia_autonomous_handler,
-        "category": "autonomous",
     },
     {
         "name": "graxia_data",
