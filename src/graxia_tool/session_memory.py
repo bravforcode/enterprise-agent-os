@@ -436,7 +436,7 @@ class SessionMemory:
                         content=f"{row['key']}: {row['value']}",
                         memory_type="preference",
                         score=score,
-                        created_at=row.get("created_at", ""),
+                        created_at=row["created_at"] if "created_at" in row.keys() else "",
                     ))
 
         # Sort by score descending, then by recency

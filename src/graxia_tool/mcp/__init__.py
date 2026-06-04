@@ -198,7 +198,7 @@ async def _memory_search(args: Dict[str, Any]) -> Dict[str, Any]:
         return _err("query is required")
 
     try:
-        mem = MemoryOS()
+        mem = SessionMemory(db_path=_get_session_db_path())
         results = await mem.search(query, layers=layers, limit=limit)
         return _ok({"results": results, "count": len(results)})
     except Exception as e:
@@ -493,6 +493,13 @@ async def _auto_route(args: Dict[str, Any]) -> Dict[str, Any]:
         return _err(f"{type(e).__name__}: {e}")
 
 
+def _get_session_db_path() -> str:
+    """Return persistent path for session memory DB."""
+    db_dir = Path.home() / ".graxia"
+    db_dir.mkdir(parents=True, exist_ok=True)
+    return str(db_dir / "session_memory.db")
+
+
 async def _memory_recall(args: Dict[str, Any]) -> Dict[str, Any]:
     """Recall relevant memories for a query using BM25 keyword matching."""
     from ..session_memory import SessionMemory
@@ -505,7 +512,7 @@ async def _memory_recall(args: Dict[str, Any]) -> Dict[str, Any]:
         return _err("query is required")
 
     try:
-        mem = SessionMemory()
+        mem = SessionMemory(db_path=_get_session_db_path())
         results = mem.recall(query, limit=limit, memory_type=memory_type)
         return _ok({
             "results": [
@@ -537,7 +544,7 @@ async def _memory_store(args: Dict[str, Any]) -> Dict[str, Any]:
         return _err("content is required")
 
     try:
-        mem = SessionMemory()
+        mem = SessionMemory(db_path=_get_session_db_path())
         if memory_type == "task":
             record = TaskRecord(
                 prompt=content,
