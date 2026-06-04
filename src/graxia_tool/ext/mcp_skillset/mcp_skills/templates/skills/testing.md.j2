@@ -1,0 +1,468 @@
+---
+name: {{ skill_id }}
+description: |
+  {{ description }}
+version: "{{ version }}"
+category: Testing
+{% if tags -%}
+tags:
+{% for tag in tags %}
+  - {{ tag }}
+{% endfor %}
+{% endif -%}
+{% if toolchain -%}
+toolchain:
+{% for tool in toolchain %}
+  - {{ tool }}
+{% endfor %}
+{% endif -%}
+{% if frameworks -%}
+frameworks:
+{% for framework in frameworks %}
+  - {{ framework }}
+{% endfor %}
+{% endif -%}
+{% if related_skills -%}
+related_skills:
+{% for skill in related_skills %}
+  - {{ skill }}
+{% endfor %}
+{% endif -%}
+author: {{ author }}
+license: {{ license }}
+created: {{ created }}
+last_updated: {{ last_updated }}
+---
+
+# {{ name }}
+
+## Overview
+
+This skill provides comprehensive guidance for implementing test-driven development (TDD) and comprehensive testing strategies with modern testing frameworks and best practices.
+
+## When to Use This Skill
+
+Use this skill when:
+- Implementing test-driven development workflows
+- Writing unit, integration, and end-to-end tests
+- Setting up testing infrastructure
+- Debugging failing tests or flaky tests
+
+## Core Principles
+
+### 1. Test-Driven Development (TDD)
+
+**Write tests before implementation (Red-Green-Refactor)**
+
+```
+1. RED: Write a failing test for desired behavior
+2. GREEN: Write minimal code to make test pass
+3. REFACTOR: Clean up code while keeping tests passing
+```
+
+### 2. Test Pyramid Strategy
+
+**Balance different types of tests**
+
+```
+        /\
+       /E2E\      <- Few (slow, expensive)
+      /------\
+     /  INT   \   <- Some (moderate speed)
+    /----------\
+   /   UNIT     \ <- Many (fast, cheap)
+  /--------------\
+```
+
+### 3. Test Independence
+
+**Each test should be independent and isolated**
+
+- Tests run in any order
+- No shared state between tests
+- Clean up after each test
+- Use test fixtures and factories
+
+### 4. Meaningful Assertions
+
+**Write clear, specific assertions**
+
+```python
+# BAD: Vague assertion
+assert result
+
+# GOOD: Specific assertion
+assert result.status == "success"
+assert result.data["id"] == expected_id
+```
+
+## Best Practices
+
+### Writing Effective Tests
+
+**AAA Pattern (Arrange-Act-Assert)**
+
+```python
+def test_user_creation():
+    # Arrange: Set up test data and preconditions
+    user_data = {
+        "name": "Test User",
+        "email": "test@example.com"
+    }
+
+    # Act: Execute the behavior being tested
+    user = create_user(user_data)
+
+    # Assert: Verify expected outcomes
+    assert user.name == user_data["name"]
+    assert user.email == user_data["email"]
+    assert user.id is not None
+```
+
+**Test Naming Conventions**
+
+```python
+# Good test names describe what they test
+def test_create_user_with_valid_data_succeeds():
+    pass
+
+def test_create_user_with_duplicate_email_raises_error():
+    pass
+
+def test_user_authentication_with_invalid_password_fails():
+    pass
+```
+
+### Unit Testing
+
+**Focus on Single Units of Behavior**
+
+```python
+# Test individual functions/methods in isolation
+def test_calculate_discount():
+    # Mock external dependencies
+    mock_pricing = Mock()
+    mock_pricing.get_base_price.return_value = 100
+
+    # Test calculation logic
+    discount = calculate_discount(mock_pricing, coupon="SAVE20")
+
+    assert discount == 20
+    mock_pricing.get_base_price.assert_called_once()
+```
+
+**Mock External Dependencies**
+
+```python
+# Use mocks for external services
+@patch('requests.get')
+def test_fetch_user_data(mock_get):
+    mock_get.return_value.json.return_value = {"id": 1, "name": "Test"}
+
+    user = fetch_user_from_api(1)
+
+    assert user["name"] == "Test"
+    mock_get.assert_called_with("https://api.example.com/users/1")
+```
+
+### Integration Testing
+
+**Test Component Interactions**
+
+```python
+# Test database integration
+@pytest.fixture
+def db_session():
+    # Use test database
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    session = Session()
+
+    yield session
+
+    session.close()
+
+def test_user_repository_create(db_session):
+    repo = UserRepository(db_session)
+    user = repo.create(name="Test", email="test@example.com")
+
+    # Verify data persisted to database
+    retrieved = repo.get_by_id(user.id)
+    assert retrieved.name == "Test"
+```
+
+### End-to-End Testing
+
+**Test Complete User Workflows**
+
+```python
+# Example: E2E test for user registration flow
+async def test_user_registration_flow(browser):
+    # Navigate to registration page
+    await browser.goto("http://localhost:3000/register")
+
+    # Fill in registration form
+    await browser.fill("#name", "Test User")
+    await browser.fill("#email", "test@example.com")
+    await browser.fill("#password", "SecurePass123")
+
+    # Submit form
+    await browser.click("#submit")
+
+    # Verify success message
+    success_msg = await browser.text_content(".success")
+    assert "Registration successful" in success_msg
+
+    # Verify redirect to dashboard
+    await browser.wait_for_url("**/dashboard")
+```
+
+## Common Patterns
+
+### Pattern 1: Test Fixtures and Factories
+
+```python
+# Pytest fixtures for reusable test data
+@pytest.fixture
+def sample_user():
+    return User(
+        id=1,
+        name="Test User",
+        email="test@example.com",
+        created_at=datetime.now()
+    )
+
+@pytest.fixture
+def db_with_users(db_session):
+    # Create test data in database
+    users = [
+        User(name="User 1", email="user1@example.com"),
+        User(name="User 2", email="user2@example.com"),
+    ]
+    db_session.add_all(users)
+    db_session.commit()
+    return db_session
+```
+
+### Pattern 2: Parameterized Tests
+
+```python
+# Test multiple inputs with same logic
+@pytest.mark.parametrize("input,expected", [
+    ("hello@example.com", True),
+    ("invalid-email", False),
+    ("user@domain", False),
+    ("user@domain.co.uk", True),
+])
+def test_email_validation(input, expected):
+    assert is_valid_email(input) == expected
+```
+
+### Pattern 3: Async Test Patterns
+
+```python
+# Testing async code
+@pytest.mark.asyncio
+async def test_async_api_call():
+    client = AsyncHttpClient()
+
+    response = await client.get("/api/users/1")
+
+    assert response.status == 200
+    assert response.json()["id"] == 1
+```
+
+## Anti-Patterns
+
+### ❌ Avoid: Testing Implementation Details
+
+**Don't test how something works, test what it does**
+
+```python
+# BAD: Testing internal implementation
+def test_user_service_calls_repository():
+    service = UserService()
+    service.repository = Mock()
+
+    service.get_user(1)
+
+    # Testing that internal method was called (brittle)
+    service.repository.find_by_id.assert_called_once()
+```
+
+✅ **Instead: Test behavior and outcomes**
+
+```python
+# GOOD: Testing behavior
+def test_get_user_returns_correct_user():
+    service = UserService()
+
+    user = service.get_user(1)
+
+    # Testing actual behavior
+    assert user.id == 1
+    assert user.name == "Expected Name"
+```
+
+### ❌ Avoid: Flaky Tests
+
+**Don't write tests that pass/fail randomly**
+
+Common causes of flaky tests:
+- Race conditions in async code
+- Time-dependent assertions
+- Random data generation
+- Shared state between tests
+
+✅ **Instead: Make tests deterministic**
+
+```python
+# BAD: Flaky time-dependent test
+def test_recent_activity():
+    activity = get_recent_activity()
+    assert activity.timestamp > datetime.now() - timedelta(minutes=5)
+
+# GOOD: Inject time dependency
+@patch('datetime.now')
+def test_recent_activity(mock_now):
+    mock_now.return_value = datetime(2025, 1, 1, 12, 0)
+    activity = get_recent_activity()
+    assert activity.timestamp == datetime(2025, 1, 1, 11, 55)
+```
+
+### ❌ Avoid: Excessive Mocking
+
+**Don't mock everything**
+
+```python
+# BAD: Too much mocking makes test meaningless
+def test_user_creation_with_excessive_mocking():
+    mock_validator = Mock(return_value=True)
+    mock_hasher = Mock(return_value="hashed")
+    mock_db = Mock()
+    mock_db.save.return_value = Mock(id=1)
+
+    # Test is just testing mocks, not real behavior
+    create_user(validator=mock_validator, hasher=mock_hasher, db=mock_db)
+```
+
+✅ **Instead: Test real code, mock only external dependencies**
+
+```python
+# GOOD: Mock only external dependencies
+@patch('external_api.verify_email')
+def test_user_creation(mock_verify):
+    mock_verify.return_value = True
+
+    # Use real validator, hasher, and test database
+    user = create_user(email="test@example.com")
+
+    assert user.id is not None
+    assert user.email_verified is True
+```
+
+## Test Coverage
+
+### Measuring Coverage
+
+```bash
+# Python with pytest-cov
+pytest --cov=src --cov-report=html --cov-report=term
+
+# JavaScript with Jest
+npm test -- --coverage
+```
+
+### Coverage Guidelines
+
+- **Unit tests**: Aim for >80% code coverage
+- **Integration tests**: Cover critical paths
+- **E2E tests**: Cover main user workflows
+- **Don't chase 100%**: Focus on valuable tests, not metrics
+
+### What to Cover
+
+- ✅ Business logic and algorithms
+- ✅ Edge cases and error conditions
+- ✅ Integration points
+- ✅ Security-critical code
+- ⚠️ Simple getters/setters (lower priority)
+- ❌ Third-party library code
+
+## Testing Tools and Frameworks
+
+### Python
+- **pytest**: Flexible testing framework
+- **unittest**: Built-in testing framework
+- **pytest-cov**: Coverage plugin
+- **pytest-asyncio**: Async test support
+- **Faker**: Test data generation
+- **factory_boy**: Test fixtures
+
+### JavaScript/TypeScript
+- **Jest**: Complete testing solution
+- **Vitest**: Fast Vite-native test runner
+- **Playwright**: E2E testing framework
+- **Testing Library**: User-centric testing utilities
+- **MSW**: API mocking
+
+### General Tools
+- **Docker**: Containerized test environments
+- **GitHub Actions**: CI/CD for automated testing
+- **SonarQube**: Code quality and coverage
+
+## Debugging Tests
+
+### Common Issues and Solutions
+
+**Issue**: Test passes locally but fails in CI
+
+**Solution**:
+- Check for environment-specific dependencies
+- Ensure deterministic test data
+- Fix race conditions in async tests
+- Use same Node/Python version as CI
+
+**Issue**: Test is slow
+
+**Solution**:
+- Profile test execution time
+- Mock expensive operations
+- Use in-memory databases for tests
+- Parallelize test execution
+
+**Issue**: Test is hard to understand
+
+**Solution**:
+- Simplify test setup
+- Use descriptive variable names
+- Add comments for complex scenarios
+- Break into smaller tests
+
+## Related Skills
+
+{% if related_skills -%}
+{% for skill in related_skills %}
+- **{{ skill }}**: Complementary testing expertise
+{% endfor %}
+{% else -%}
+- **debugging**: Debug failing tests systematically
+- **web-development**: Test web applications
+- **api-development**: Test API endpoints
+- **continuous-integration**: Automate test execution
+{% endif %}
+
+## References
+
+- pytest Documentation: https://docs.pytest.org
+- Jest Documentation: https://jestjs.io
+- Testing Best Practices: https://testingjavascript.com
+- Test-Driven Development: Kent Beck's TDD book
+
+## Version History
+
+- **{{ version }}** ({{ created }}): Initial version
+{% if last_updated != created -%}
+- Last updated: {{ last_updated }}
+{% endif %}

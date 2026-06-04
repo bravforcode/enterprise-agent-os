@@ -1,0 +1,350 @@
+---
+name: {{ skill_id }}
+description: |
+  {{ description }}
+version: "{{ version }}"
+category: Web Development
+{% if tags -%}
+tags:
+{% for tag in tags %}
+  - {{ tag }}
+{% endfor %}
+{% endif -%}
+{% if toolchain -%}
+toolchain:
+{% for tool in toolchain %}
+  - {{ tool }}
+{% endfor %}
+{% endif -%}
+{% if frameworks -%}
+frameworks:
+{% for framework in frameworks %}
+  - {{ framework }}
+{% endfor %}
+{% endif -%}
+{% if related_skills -%}
+related_skills:
+{% for skill in related_skills %}
+  - {{ skill }}
+{% endfor %}
+{% endif -%}
+author: {{ author }}
+license: {{ license }}
+created: {{ created }}
+last_updated: {{ last_updated }}
+---
+
+# {{ name }}
+
+## Overview
+
+This skill provides comprehensive guidance for modern web development with {{ domain }}, following 2024-2025 best practices and production-ready patterns.
+
+## When to Use This Skill
+
+Use this skill when:
+- Building web applications with modern frameworks
+- Implementing RESTful or GraphQL APIs
+- Creating responsive and accessible user interfaces
+- Deploying web services to production
+
+## Core Principles
+
+### 1. Component-Based Architecture
+
+**Design applications as composable, reusable components**
+
+```javascript
+// Example: Component composition
+function UserProfile({ user }) {
+  return (
+    <div className="profile">
+      <Avatar src={user.avatar} />
+      <UserInfo name={user.name} email={user.email} />
+      <UserActions userId={user.id} />
+    </div>
+  );
+}
+```
+
+### 2. API-First Design
+
+**Define API contracts before implementation**
+
+- Use OpenAPI/Swagger for REST APIs
+- Define GraphQL schemas with SDL
+- Version APIs from the start
+- Document all endpoints comprehensively
+
+### 3. Performance Optimization
+
+**Optimize for perceived and actual performance**
+
+- Implement lazy loading and code splitting
+- Use CDN for static assets
+- Enable HTTP/2 and compression
+- Monitor Core Web Vitals
+
+### 4. Security Best Practices
+
+**Implement security at every layer**
+
+- Validate inputs on client and server
+- Use HTTPS everywhere
+- Implement CORS policies correctly
+- Protect against XSS, CSRF, and injection attacks
+
+## Best Practices
+
+### Frontend Development
+
+**State Management**
+- Keep state close to where it's used
+- Use context/providers for shared state
+- Implement proper data fetching patterns
+- Cache responses appropriately
+
+**Routing and Navigation**
+- Use declarative routing
+- Implement proper route guards
+- Handle 404 and error pages
+- Support deep linking
+
+**Forms and Validation**
+- Validate on client and server
+- Provide clear error messages
+- Show validation feedback immediately
+- Handle submission states (loading, error, success)
+
+### Backend Development
+
+**API Design**
+- Follow REST conventions or GraphQL best practices
+- Use proper HTTP status codes
+- Implement pagination for lists
+- Version your APIs
+
+**Database Interactions**
+- Use connection pooling
+- Implement proper indexing
+- Avoid N+1 queries
+- Use transactions for multi-step operations
+
+**Authentication & Authorization**
+- Use JWT or session-based auth appropriately
+- Implement refresh token rotation
+- Use role-based access control (RBAC)
+- Store passwords with bcrypt (min 12 rounds)
+
+## Common Patterns
+
+### Pattern 1: Request/Response Handling
+
+```javascript
+// Async/await with error handling
+async function fetchUserData(userId) {
+  try {
+    const response = await fetch(`/api/users/${userId}`);
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+
+    const data = await response.json();
+    return { success: true, data };
+  } catch (error) {
+    logger.error('Failed to fetch user:', error);
+    return { success: false, error: error.message };
+  }
+}
+```
+
+### Pattern 2: Environment-Based Configuration
+
+```javascript
+// Configuration management
+const config = {
+  apiUrl: process.env.API_URL || 'http://localhost:3000',
+  environment: process.env.NODE_ENV || 'development',
+  logLevel: process.env.LOG_LEVEL || 'info',
+};
+
+// Never hardcode secrets
+const apiKey = process.env.API_KEY;
+if (!apiKey) {
+  throw new Error('API_KEY environment variable is required');
+}
+```
+
+### Pattern 3: Middleware Pipeline
+
+```javascript
+// Express middleware pattern
+app.use(cors());
+app.use(express.json());
+app.use(requestLogger);
+app.use(authenticate);
+
+// Route-specific middleware
+app.get('/admin', requireAdmin, adminHandler);
+```
+
+## Anti-Patterns
+
+### ❌ Avoid: Prop Drilling
+
+**Don't pass props through many component layers**
+
+```javascript
+// BAD: Prop drilling
+<App>
+  <Page user={user}>
+    <Section user={user}>
+      <UserInfo user={user} />
+    </Section>
+  </Page>
+</App>
+```
+
+✅ **Instead: Use Context or state management**
+
+```javascript
+// GOOD: Context provider
+<UserContext.Provider value={user}>
+  <App>
+    <Page>
+      <Section>
+        <UserInfo /> {/* Accesses user from context */}
+      </Section>
+    </Page>
+  </App>
+</UserContext.Provider>
+```
+
+### ❌ Avoid: Blocking the Event Loop
+
+**Don't perform CPU-intensive operations in async handlers**
+
+✅ **Instead: Use worker threads or background jobs**
+
+```javascript
+// GOOD: Offload heavy work
+app.post('/process', async (req, res) => {
+  const jobId = await queue.add('processData', req.body);
+  res.json({ jobId, status: 'processing' });
+});
+```
+
+### ❌ Avoid: Exposing Sensitive Data
+
+**Don't return internal errors or sensitive data to clients**
+
+```javascript
+// BAD: Exposing internal errors
+catch (error) {
+  res.status(500).json({ error: error.stack });
+}
+```
+
+✅ **Instead: Return sanitized errors**
+
+```javascript
+// GOOD: Sanitized error response
+catch (error) {
+  logger.error('Request failed:', error);
+  res.status(500).json({
+    error: 'Internal server error',
+    requestId: req.id
+  });
+}
+```
+
+## Testing Strategy
+
+### Frontend Testing
+
+**Component Tests**
+- Test component behavior, not implementation
+- Mock external dependencies
+- Test user interactions
+- Validate accessibility
+
+**Integration Tests**
+- Test API integration
+- Validate routing and navigation
+- Test authentication flows
+- Verify error handling
+
+### Backend Testing
+
+**API Tests**
+- Test all endpoints
+- Validate request/response schemas
+- Test authentication and authorization
+- Verify error responses
+
+**Database Tests**
+- Use test database or in-memory database
+- Test CRUD operations
+- Validate transactions
+- Test migration scripts
+
+## Performance Optimization
+
+### Frontend Optimization
+
+- Code splitting and lazy loading
+- Tree shaking and minification
+- Image optimization (WebP, lazy loading)
+- Implement service workers for caching
+- Use React.memo, useMemo, useCallback appropriately
+
+### Backend Optimization
+
+- Enable response compression (gzip/brotli)
+- Implement caching strategies (Redis, CDN)
+- Use database query optimization
+- Implement rate limiting
+- Profile and monitor performance
+
+## Security Checklist
+
+- [ ] HTTPS enabled everywhere
+- [ ] CORS configured correctly
+- [ ] Input validation on client and server
+- [ ] Output encoding to prevent XSS
+- [ ] CSRF protection implemented
+- [ ] SQL injection prevention (use parameterized queries)
+- [ ] Authentication implemented correctly
+- [ ] Authorization checks on all routes
+- [ ] Rate limiting on API endpoints
+- [ ] Security headers configured (CSP, HSTS, etc.)
+- [ ] Dependencies regularly updated
+- [ ] Secrets stored in environment variables
+
+## Related Skills
+
+{% if related_skills -%}
+{% for skill in related_skills %}
+- **{{ skill }}**: Complementary web development expertise
+{% endfor %}
+{% else -%}
+- **api-development**: Design and implement robust APIs
+- **testing**: Comprehensive testing strategies
+- **deployment**: Deploy web applications to production
+- **security**: Implement security best practices
+{% endif %}
+
+## References
+
+- MDN Web Docs: https://developer.mozilla.org
+- Web.dev: https://web.dev
+- OWASP Top 10: https://owasp.org/www-project-top-ten/
+- Framework-specific documentation
+
+## Version History
+
+- **{{ version }}** ({{ created }}): Initial version
+{% if last_updated != created -%}
+- Last updated: {{ last_updated }}
+{% endif %}

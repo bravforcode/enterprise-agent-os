@@ -1,0 +1,38 @@
+import os
+
+from fast_agent.constants import DEFAULT_MAX_ITERATIONS
+from fast_agent.llm.provider.openai.llm_openai import OpenAILLM
+from fast_agent.llm.provider_types import Provider
+from fast_agent.types import RequestParams
+
+DEFAULT_OLLAMA_BASE_URL = "http://localhost:11434/v1"
+DEFAULT_OLLAMA_MODEL = "llama3.2:latest"
+DEFAULT_OLLAMA_API_KEY = "ollama"
+
+
+class GenericLLM(OpenAILLM):
+    def __init__(self, **kwargs) -> None:
+        kwargs.pop("provider", None)
+        super().__init__(provider=Provider.GENERIC, **kwargs)
+
+    def _initialize_default_params(self, kwargs: dict) -> RequestParams:
+        """Initialize Generic  parameters"""
+        chosen_model = self._resolve_default_model_name(
+            kwargs.get("model"),
+            DEFAULT_OLLAMA_MODEL,
+        )
+
+        return RequestParams(
+            model=chosen_model,
+            systemPrompt=self.instruction,
+            parallel_tool_calls=True,
+            max_iterations=DEFAULT_MAX_ITERATIONS,
+            use_history=True,
+        )
+
+    def _provider_base_url(self) -> str | None:
+        base_url: str | None = os.getenv("GENERIC_BASE_URL", DEFAULT_OLLAMA_BASE_URL)
+        if self.context.config and self.context.config.generic:
+            base_url = self.context.config.generic.base_url
+
+        return base_url

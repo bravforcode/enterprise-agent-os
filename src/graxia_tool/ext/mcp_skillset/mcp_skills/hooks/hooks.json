@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "mcp-skillset enrich-hook",
+            "timeout": 5000
+          }
+        ]
+      }
+    ]
+  }
+}

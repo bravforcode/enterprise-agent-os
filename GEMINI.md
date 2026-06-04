@@ -92,13 +92,23 @@ Then: do the actual work
 
 ## Skills
 
-Load skills when task matches:
+**425 skills** loaded from curated repos (awesome-copilot, AI-Research-SKILLs, openclaw, fast-agent, mcp-local-rag) plus 60+ built-in.
+
+Progressive loading via `skill_search` (metadata first, full load on demand):
 ```
-Tool call: graxia_skills(action="list")
-Tool call: graxia_skills(action="load", skill_name="brainstorming")
+Tool call: skill_search(query="frontend")        # find matching skills (metadata)
+Tool call: graxia_skills(action="list")          # list all loaded skills
+Tool call: graxia_skills(action="load", skill_name="...")  # full load
 ```
 
-Available: brainstorming, caveman, lean-ctx, systematic-debugging, rtk-tdd, web-search, mcp-builder, pdf, docx, pptx, xlsx, imagegen, frontend-design, security-review, code-reviewer, deep-research, pair-programming, sparc-methodology, skill-creator, webapp-testing, and 60+ more.
+**Skill locations:**
+- `src/graxia_tool/skills/` — copilot-*, research-*, openclaw-*, rag-* (425 external)
+- Built-in: brainstorming, caveman, lean-ctx, systematic-debugging, rtk-tdd, web-search, mcp-builder, pdf, docx, pptx, xlsx, imagegen, frontend-design, security-review, code-reviewer, deep-research, pair-programming, sparc-methodology, skill-creator, webapp-testing, and more
+
+**Python ext modules** (`src/graxia_tool/ext/`):
+- `memory_plus` — enhanced memory patterns
+- `mcp_skillset` — MCP-based skill orchestration
+- `fast_agent` — fast agent framework integration
 
 ## RAG
 

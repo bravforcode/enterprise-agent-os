@@ -1,0 +1,262 @@
+from __future__ import annotations
+
+import dataclasses
+import inspect
+import os
+import warnings
+from collections.abc import Mapping
+from datetime import date, datetime
+from decimal import Decimal
+from enum import Enum
+from pathlib import Path
+from typing import Any, Iterable
+from uuid import UUID
+
+import httpx
+
+from fast_agent.core.logging import logger
+
+type JsonScalar = str | int | float | bool | None
+type JsonValue = JsonScalar | list[JsonValue] | dict[str, JsonValue]
+
+_TEXTLIKE_BYTES_TYPES = (bytes, bytearray, memoryview)
+
+
+def snapshot_json_value(obj: object | None) -> JsonValue:
+    """Capture a JSON-safe snapshot for persistence/debugging."""
+    return _snapshot_json_value(obj, seen=set())
+
+
+def _snapshot_json_value(obj: object | None, *, seen: set[int]) -> JsonValue:
+    if obj is None:
+        return None
+
+    if isinstance(obj, (str, bool, int, float)):
+        return obj
+
+    if isinstance(obj, (datetime, date)):
+        return obj.isoformat()
+    if isinstance(obj, (Decimal, UUID)):
+        return str(obj)
+    if isinstance(obj, Path):
+        return str(obj)
+    if isinstance(obj, Enum):
+        return obj.value
+
+    if isinstance(obj, _TEXTLIKE_BYTES_TYPES):
+        return str(obj)
+
+    if isinstance(obj, Mapping):
+        obj_id = id(obj)
+        if obj_id in seen:
+            return f"<circular-reference:{type(obj).__name__}>"
+
+        seen.add(obj_id)
+        try:
+            return {str(key): _snapshot_json_value(value, seen=seen) for key, value in obj.items()}
+        finally:
+            seen.remove(obj_id)
+
+    extracted = _extract_snapshot_source(obj)
+    if extracted is None or extracted is obj:
+        if isinstance(obj, Iterable) and not isinstance(obj, (str, bytes, bytearray, memoryview)):
+            obj_id = id(obj)
+            if obj_id in seen:
+                return f"<circular-reference:{type(obj).__name__}>"
+
+            seen.add(obj_id)
+            try:
+                return [_snapshot_json_value(item, seen=seen) for item in obj]
+            finally:
+                seen.remove(obj_id)
+        return str(obj)
+
+    obj_id = id(obj)
+    if obj_id in seen:
+        return f"<circular-reference:{type(obj).__name__}>"
+
+    seen.add(obj_id)
+    try:
+        return _snapshot_json_value(extracted, seen=seen)
+    finally:
+        seen.remove(obj_id)
+
+
+def _extract_snapshot_source(obj: object) -> object | None:
+    model_dump = getattr(obj, "model_dump", None)
+    if callable(model_dump):
+        try:
+            return model_dump(mode="json")
+        except TypeError:
+            try:
+                return model_dump()
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+    dict_method = getattr(obj, "dict", None)
+    if callable(dict_method):
+        try:
+            return dict_method()
+        except Exception:
+            pass
+
+    raw_dict = getattr(obj, "__dict__", None)
+    if isinstance(raw_dict, Mapping) and raw_dict:
+        return raw_dict
+
+    return None
+
+
+class JSONSerializer:
+    """
+    A robust JSON serializer that handles various Python objects by attempting
+    different serialization strategies recursively.
+    """
+
+    MAX_DEPTH = 99  # Maximum recursion depth
+
+    # Fields that are likely to contain sensitive information
+    SENSITIVE_FIELDS = {
+        "api_key",
+        "secret",
+        "password",
+        "token",
+        "auth",
+        "private_key",
+        "client_secret",
+        "access_token",
+        "refresh_token",
+    }
+
+    def __init__(self) -> None:
+        # Set of already processed objects to prevent infinite recursion
+        self._processed_objects: set[int] = set()
+        # Check if secrets should be logged in full
+        self._log_secrets = os.getenv("LOG_SECRETS", "").upper() == "TRUE"
+
+    def _redact_sensitive_value(self, value: str) -> str:
+        """Redact sensitive values to show only first 10 chars."""
+        if not value or not isinstance(value, str):
+            return value
+        if self._log_secrets:
+            return value
+        if len(value) <= 10:
+            return value + "....."
+        return value[:10] + "....."
+
+    def serialize(self, obj: Any) -> Any:
+        """Main entry point for serialization."""
+        # Reset processed objects for new serialization
+        self._processed_objects.clear()
+        return self._serialize_object(obj, depth=0)
+
+    def _is_sensitive_key(self, key: str) -> bool:
+        """Check if a key likely contains sensitive information."""
+        key = str(key).lower()
+        return any(sensitive in key for sensitive in self.SENSITIVE_FIELDS)
+
+    def _serialize_object(self, obj: Any, depth: int = 0) -> Any:
+        """Recursively serialize an object using various strategies."""
+        # Handle None
+        if obj is None:
+            return None
+
+        if depth == 0:
+            self._parent_obj = obj
+        # Check depth
+        if depth > self.MAX_DEPTH:
+            warnings.warn(
+                f"Maximum recursion depth ({self.MAX_DEPTH}) exceeded while serializing object of type {type(obj).__name__} parent: {type(self._parent_obj).__name__}"
+            )
+            return str(obj)
+
+        # Prevent infinite recursion
+        obj_id = id(obj)
+        if obj_id in self._processed_objects:
+            return str(obj)
+        self._processed_objects.add(obj_id)
+
+        # Try different serialization strategies in order
+        try:
+            if isinstance(obj, httpx.Response):
+                return f"<httpx.Response [{obj.status_code}] {obj.url}>"
+
+            if isinstance(obj, logger.Logger):
+                return "<logging: logger>"
+
+            # Basic JSON-serializable types
+            if isinstance(obj, (str, int, float, bool)):
+                return obj
+
+            # Handle common built-in types
+            if isinstance(obj, (datetime, date)):
+                return obj.isoformat()
+            if isinstance(obj, (Decimal, UUID)):
+                return str(obj)
+            if isinstance(obj, Path):
+                return str(obj)
+            if isinstance(obj, Enum):
+                return obj.value
+
+            # Handle callables
+            if callable(obj):
+                return f"<callable: {obj.__name__}>"
+
+            # Handle Pydantic models
+            if hasattr(obj, "model_dump"):  # Pydantic v2
+                module = getattr(obj, "__module__", "")
+                if module.startswith("openai.types.responses"):
+                    return self._serialize_object(obj.model_dump(warnings="none"))
+                return self._serialize_object(obj.model_dump())
+            if hasattr(obj, "dict"):  # Pydantic v1
+                return self._serialize_object(obj.dict())
+
+            # Handle dataclasses
+            if dataclasses.is_dataclass(obj):
+                return self._serialize_object(dataclasses.asdict(obj))
+
+            # Handle objects with custom serialization method
+            if hasattr(obj, "to_json"):
+                return self._serialize_object(obj.to_json())
+            if hasattr(obj, "to_dict"):
+                return self._serialize_object(obj.to_dict())
+
+            # Handle dictionaries with sensitive data redaction
+            if isinstance(obj, dict):
+                return {
+                    str(key): self._redact_sensitive_value(value)
+                    if self._is_sensitive_key(key)
+                    else self._serialize_object(value, depth + 1)
+                    for key, value in obj.items()
+                }
+
+            # Handle iterables (lists, tuples, sets)
+            if isinstance(obj, Iterable) and not isinstance(obj, (str, bytes)):
+                return [self._serialize_object(item, depth + 1) for item in obj]
+
+            # Handle objects with __dict__
+            if hasattr(obj, "__dict__"):
+                return self._serialize_object(obj.__dict__, depth + 1)
+
+            # Handle objects with attributes
+            if inspect.getmembers(obj):
+                return {
+                    name: self._redact_sensitive_value(value)
+                    if self._is_sensitive_key(name)
+                    else self._serialize_object(value, depth + 1)
+                    for name, value in inspect.getmembers(obj)
+                    if not name.startswith("_") and not inspect.ismethod(value)
+                }
+
+            # Fallback: convert to string
+            return str(obj)
+
+        except Exception as e:
+            # If all serialization attempts fail, return string representation
+            return f"<unserializable: {type(obj).__name__}, error: {str(e)}>"
+
+    def __call__(self, obj: Any) -> Any:
+        """Make the serializer callable."""
+        return self.serialize(obj)

@@ -1,0 +1,39 @@
+from fast_agent.llm.provider.openai.llm_openai_compatible import OpenAICompatibleLLM
+from fast_agent.llm.provider_types import Provider
+from fast_agent.types import RequestParams
+
+GROQ_BASE_URL = "https://api.groq.com/openai/v1"
+DEFAULT_GROQ_MODEL = "qwen/qwen3-32b"
+
+### There is some big refactorings to be had quite easily here now:
+### - combining the structured output type handling
+### - deduplicating between this and the deepseek llm
+
+
+class GroqLLM(OpenAICompatibleLLM):
+    def __init__(self, **kwargs) -> None:
+        kwargs.pop("provider", None)
+        super().__init__(provider=Provider.GROQ, **kwargs)
+
+    def _initialize_default_params(self, kwargs: dict) -> RequestParams:
+        """Initialize Groq default parameters"""
+        base_params = self._initialize_default_params_with_model_fallback(kwargs, DEFAULT_GROQ_MODEL)
+        base_params.parallel_tool_calls = False
+
+        return base_params
+
+    def _supports_structured_prompt(self) -> bool:
+        llm_model = (
+            self.default_request_params.model if self.default_request_params else DEFAULT_GROQ_MODEL
+        )
+        if not llm_model:
+            return False
+        json_mode = self._get_model_json_mode(llm_model)
+        return json_mode == "object"
+
+    def _provider_base_url(self) -> str:
+        base_url = None
+        if self.context.config and self.context.config.groq:
+            base_url = self.context.config.groq.base_url
+
+        return base_url if base_url else GROQ_BASE_URL

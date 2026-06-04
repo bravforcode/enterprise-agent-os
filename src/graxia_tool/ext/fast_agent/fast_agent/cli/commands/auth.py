@@ -1,0 +1,504 @@
+"""Authentication management commands for fast-agent.
+
+Shows keyring backend, per-server OAuth token status, and provides a way to clear tokens.
+"""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+import typer
+from rich.table import Table
+
+from fast_agent.cli.command_support import get_settings_or_exit
+from fast_agent.cli.display import print_detail_line, print_section_header
+from fast_agent.core.keyring_utils import get_keyring_status
+from fast_agent.mcp.oauth_client import (
+    _derive_base_server_url,
+    clear_keyring_token,
+    compute_server_identity,
+    keyring_token_present,
+    list_keyring_tokens,
+)
+from fast_agent.ui.console import console
+from fast_agent.utils.async_utils import run_sync
+
+if TYPE_CHECKING:
+    from fast_agent.config import Settings
+
+app = typer.Typer(
+    help=(
+        "Manage OAuth tokens stored in the OS keyring for MCP HTTP/SSE servers "
+        "(identity = base URL)."
+    ),
+    add_completion=False,
+)
+
+
+def _print_keyring_backend_status(*, backend: str, usable: bool) -> None:
+    value = backend if usable and backend != "unavailable" else "not available"
+    value_style = "green" if usable and backend != "unavailable" else "red"
+    print_detail_line(console, "keyring backend", value, value_style=value_style)
+
+
+def _server_rows_from_settings(settings: Settings):
+    rows = []
+    mcp = getattr(settings, "mcp", None)
+    servers = getattr(mcp, "servers", {}) if mcp else {}
+    for name, cfg in servers.items():
+        transport = getattr(cfg, "transport", "")
+        if transport == "stdio":
+            # STDIO servers do not use OAuth; skip in auth views
+            continue
+        url = getattr(cfg, "url", None)
+        auth = getattr(cfg, "auth", None)
+        oauth_enabled = getattr(auth, "oauth", True) if auth is not None else True
+        persist = getattr(auth, "persist", "keyring") if auth is not None else "keyring"
+        identity = compute_server_identity(cfg)
+        # token presence only meaningful if persist is keyring and transport is http/sse
+        has_token = False
+        if persist == "keyring" and transport in ("http", "sse") and oauth_enabled:
+            has_token = keyring_token_present(identity)
+        rows.append(
+            {
+                "name": name,
+                "transport": transport,
+                "url": url or "",
+                "persist": persist,
+                "oauth": oauth_enabled and transport in ("http", "sse"),
+                "has_token": has_token,
+                "identity": identity,
+            }
+        )
+    return rows
+
+
+def _servers_by_identity(settings: Settings) -> dict[str, list[str]]:
+    """Group configured server names by derived identity (base URL)."""
+    mapping: dict[str, list[str]] = {}
+    mcp = getattr(settings, "mcp", None)
+    servers = getattr(mcp, "servers", {}) if mcp else {}
+    for name, cfg in servers.items():
+        try:
+            identity = compute_server_identity(cfg)
+        except Exception:
+            identity = name
+        mapping.setdefault(identity, []).append(name)
+    return mapping
+
+
+@app.command()
+def status(
+    target: str | None = typer.Argument(None, help="Identity (base URL) or server name"),
+    config_path: str | None = typer.Option(
+        None,
+        "--config-path",
+        "-c",
+        metavar="<path-or-uri>",
+        help="Path, HTTP(S) URL, file:// URI, or hf:// URI to config file",
+    ),
+) -> None:
+    """Show keyring backend and token status for configured MCP servers (identity = base URL)."""
+    settings = get_settings_or_exit(config_path)
+    keyring_status = get_keyring_status()
+    backend = keyring_status.name
+    backend_usable = keyring_status.available
+
+    # Single-target view if target provided
+    if target:
+        settings = get_settings_or_exit(config_path)
+        identity = _derive_base_server_url(target) if "://" in target else None
+        if not identity:
+            servers = getattr(getattr(settings, "mcp", None), "servers", {}) or {}
+            cfg = servers.get(target)
+            if not cfg:
+                typer.echo(f"Server '{target}' not found in config; treating as identity")
+                identity = target
+            else:
+                identity = compute_server_identity(cfg)
+
+        # Direct presence check
+        present = False
+        if backend_usable:
+            present = keyring_token_present(identity)
+
+        table = Table(show_header=True, box=None)
+        table.add_column("Identity", header_style="bold")
+        table.add_column("Token", header_style="bold")
+        table.add_column("Servers", header_style="bold")
+        by_id = _servers_by_identity(settings)
+        servers_for_id = ", ".join(by_id.get(identity, [])) or "[dim]None[/dim]"
+        token_disp = "[bold green]✓[/bold green]" if present else "[dim]✗[/dim]"
+        table.add_row(identity, token_disp, servers_for_id)
+
+        _print_keyring_backend_status(backend=backend, usable=backend_usable)
+        console.print(table)
+        console.print(
+            "\n[dim]Run 'fast-agent auth clear --identity "
+            f"{identity}[/dim][dim]' to remove this token, or 'fast-agent auth clear --all' to remove all.[/dim]"
+        )
+        return
+
+    # Full status view
+    _print_keyring_backend_status(backend=backend, usable=backend_usable)
+
+    tokens = list_keyring_tokens()
+    token_table = Table(show_header=True, box=None)
+    token_table.add_column("Stored Tokens (Identity)", header_style="bold")
+    token_table.add_column("Present", header_style="bold")
+    if tokens:
+        for ident in tokens:
+            token_table.add_row(ident, "[bold green]✓[/bold green]")
+    else:
+        token_table.add_row("[dim]None[/dim]", "[dim]✗[/dim]")
+
+    console.print(token_table)
+
+    rows = _server_rows_from_settings(settings)
+    if rows:
+        map_table = Table(show_header=True, box=None)
+        map_table.add_column("Server", header_style="bold")
+        map_table.add_column("Transport", header_style="bold")
+        map_table.add_column("OAuth", header_style="bold")
+        map_table.add_column("Persist", header_style="bold")
+        map_table.add_column("Token", header_style="bold")
+        map_table.add_column("Identity", header_style="bold")
+        for row in rows:
+            oauth_status = "[green]on[/green]" if row["oauth"] else "[dim]off[/dim]"
+            persist = row["persist"]
+            persist_disp = (
+                f"[green]{persist}[/green]"
+                if persist == "keyring"
+                else f"[yellow]{persist}[/yellow]"
+            )
+            # Direct presence check for each identity so status works even without index
+            token_disp = "[dim]✗[/dim]"
+            if persist == "keyring" and row["oauth"]:
+                if backend_usable:
+                    has_token = bool(row["has_token"])
+                    token_disp = "[bold green]✓[/bold green]" if has_token else "[dim]✗[/dim]"
+                else:
+                    token_disp = "[red]not available[/red]"
+            elif persist == "memory" and row["oauth"]:
+                token_disp = "[yellow]memory[/yellow]"
+            map_table.add_row(
+                row["name"],
+                row["transport"].upper(),
+                oauth_status,
+                persist_disp,
+                token_disp,
+                row["identity"],
+            )
+        console.print(map_table)
+
+    try:
+        from datetime import datetime
+
+        from fast_agent.llm.provider.openai.codex_oauth import get_codex_token_status
+
+        codex_status = get_codex_token_status()
+        codex_table = Table(show_header=True, box=None)
+        codex_table.add_column("Codex OAuth", style="white", header_style="bold")
+        codex_table.add_column("Token", header_style="bold")
+        codex_table.add_column("Source", header_style="bold")
+        codex_table.add_column("Expires", header_style="bold")
+
+        if not codex_status.get("present"):
+            token_display = "[dim]Not configured[/dim]"
+            source_display = "[dim]-[/dim]"
+            expires_display = "[dim]-[/dim]"
+        else:
+            token_display = "[bold green]Present[/bold green]"
+            source = codex_status.get("source")
+            if source == "keyring":
+                source_display = "[green]Keyring OAuth[/green]"
+            elif source == "auth.json":
+                source_display = "[green]Codex auth.json[/green]"
+            else:
+                source_display = "[green]OAuth token[/green]"
+            expires_at = codex_status.get("expires_at")
+            if expires_at:
+                expires_display = datetime.fromtimestamp(expires_at).strftime("%Y-%m-%d %H:%M")
+                if codex_status.get("expired"):
+                    expires_display = f"[red]expired {expires_display}[/red]"
+                else:
+                    expires_display = f"[green]{expires_display}[/green]"
+            else:
+                expires_display = "[green]unknown[/green]"
+
+        codex_table.add_row("Token", token_display, source_display, expires_display)
+        print_section_header(console, "Codex OAuth", color="blue")
+        console.print(codex_table)
+    except Exception:
+        pass
+
+    console.print(
+        "\n[dim]Run 'fast-agent auth clear --identity <identity>' to remove a token, or 'fast-agent auth clear --all' to remove all.\nCodex OAuth: 'fast-agent auth codexplan' (login) or 'fast-agent auth codex-clear' (remove).[/dim]"
+    )
+
+
+@app.command()
+def clear(
+    server: str | None = typer.Argument(None, help="Server name to clear (from config)"),
+    identity: str | None = typer.Option(
+        None, "--identity", help="Token identity (base URL) to clear"
+    ),
+    all: bool = typer.Option(False, "--all", help="Clear tokens for all identities in keyring"),
+    config_path: str | None = typer.Option(
+        None,
+        "--config-path",
+        "-c",
+        metavar="<path-or-uri>",
+        help="Path, HTTP(S) URL, file:// URI, or hf:// URI to config file",
+    ),
+) -> None:
+    """Clear stored OAuth tokens from the keyring by server name or identity (base URL)."""
+    targets_identities: list[str] = []
+    if all:
+        targets_identities = list_keyring_tokens()
+    elif identity:
+        targets_identities = [identity]
+    elif server:
+        settings = get_settings_or_exit(config_path)
+        rows = _server_rows_from_settings(settings)
+        match = next((r for r in rows if r["name"] == server), None)
+        if not match:
+            typer.echo(f"Server '{server}' not found in config")
+            raise typer.Exit(1)
+        targets_identities = [match["identity"]]
+    else:
+        typer.echo("Provide --identity, a server name, or use --all")
+        raise typer.Exit(1)
+
+    # Confirm destructive action
+    if not typer.confirm("Remove tokens for the selected server(s) from keyring?", default=False):
+        raise typer.Exit()
+
+    removed_any = False
+    for ident in targets_identities:
+        if clear_keyring_token(ident):
+            removed_any = True
+    if removed_any:
+        typer.echo("Tokens removed.")
+    else:
+        typer.echo("No tokens found or nothing removed.")
+
+
+@app.callback(invoke_without_command=True)
+def main(
+    ctx: typer.Context,
+    config_path: str | None = typer.Option(
+        None,
+        "--config-path",
+        "-c",
+        metavar="<path-or-uri>",
+        help="Path, HTTP(S) URL, file:// URI, or hf:// URI to config file",
+    ),
+) -> None:
+    """Default to showing status if no subcommand is provided."""
+    if ctx.invoked_subcommand is None:
+        try:
+            status(target=None, config_path=config_path)
+        except typer.Exit:
+            raise
+        except Exception as e:
+            typer.echo(f"Error showing auth status: {e}")
+
+
+@app.command("codex-login")
+def codex_login() -> None:
+    """Start OAuth flow for Codex and store tokens in the keyring."""
+    from fast_agent.core.exceptions import ProviderKeyError, format_fast_agent_error
+    from fast_agent.llm.provider.openai.codex_oauth import login_codex_oauth
+
+    try:
+        login_codex_oauth()
+        typer.echo("Codex OAuth login complete. Tokens stored in keyring.")
+    except ProviderKeyError as exc:
+        typer.echo(format_fast_agent_error(exc))
+        raise typer.Exit(1)
+
+
+@app.command("codexplan")
+def codexplan() -> None:
+    """Ensure Codex OAuth tokens are present; optionally start login."""
+    from fast_agent.core.exceptions import ProviderKeyError, format_fast_agent_error
+    from fast_agent.core.keyring_utils import get_keyring_status
+    from fast_agent.llm.provider.openai.codex_oauth import (
+        get_codex_token_status,
+        login_codex_oauth,
+    )
+
+    keyring_status = get_keyring_status()
+    if not keyring_status.writable:
+        if not keyring_status.available:
+            detail = "No usable keyring backend was detected."
+        else:
+            detail = f"Keyring backend '{keyring_status.name}' is not writable."
+        typer.echo(
+            "Keyring backend not writable; cannot store Codex OAuth tokens. "
+            f"{detail}"
+        )
+        raise typer.Exit(1)
+
+    status = get_codex_token_status()
+    if status.get("present"):
+        typer.echo("Codex OAuth token already present in keyring.")
+        return
+
+    if not typer.confirm("No Codex OAuth token found. Start OAuth login flow now?", default=True):
+        raise typer.Exit(1)
+
+    try:
+        login_codex_oauth()
+        typer.echo("Codex OAuth login complete. Tokens stored in keyring.")
+    except ProviderKeyError as exc:
+        typer.echo(format_fast_agent_error(exc))
+        raise typer.Exit(1)
+
+
+@app.command("codex-clear")
+def codex_clear() -> None:
+    """Remove Codex OAuth tokens from the keyring."""
+    from fast_agent.core.keyring_utils import get_keyring_status
+    from fast_agent.llm.provider.openai.codex_oauth import clear_codex_tokens
+
+    status = get_keyring_status()
+    if not status.available:
+        typer.echo("Keyring backend not available; nothing to clear.")
+        raise typer.Exit(1)
+    if not status.writable:
+        typer.echo(
+            "Keyring backend not writable; deletion may fail. "
+            f"Detected backend '{status.name}'."
+        )
+
+    if not typer.confirm("Remove Codex OAuth tokens from keyring?", default=False):
+        raise typer.Exit()
+
+    if clear_codex_tokens():
+        typer.echo("Codex OAuth tokens removed.")
+    else:
+        typer.echo("No Codex OAuth tokens found.")
+
+
+@app.command()
+def login(
+    target: str | None = typer.Argument(
+        None, help="Server name (from config) or identity (base URL)"
+    ),
+    transport: str | None = typer.Option(
+        None, "--transport", help="Transport for identity mode: http or sse"
+    ),
+    config_path: str | None = typer.Option(
+        None,
+        "--config-path",
+        "-c",
+        metavar="<path-or-uri>",
+        help="Path, HTTP(S) URL, file:// URI, or hf:// URI to config file",
+    ),
+) -> None:
+    """Start OAuth flow and store tokens in the keyring for a server.
+
+    Accepts either a configured server name or an identity (base URL).
+    For identity mode, default transport is 'http' (uses <identity>/mcp).
+    """
+    # Resolve to a minimal MCPServerSettings
+    from fast_agent.config import MCPServerAuthSettings, MCPServerSettings
+    from fast_agent.mcp.oauth_client import build_oauth_provider
+
+    cfg = None
+    resolved_transport = None
+
+    if target is None or not target.strip():
+        typer.echo("Provide a server name or identity URL to log in.")
+        typer.echo(
+            "Example: `fast-agent auth login my-server` "
+            "or `fast-agent auth login https://example.com`."
+        )
+        typer.echo("Run `fast-agent auth login --help` for more details.")
+        raise typer.Exit(1)
+
+    target = target.strip()
+
+    if "://" in target:
+        # Identity mode
+        base = _derive_base_server_url(target)
+        if not base:
+            typer.echo("Invalid identity URL")
+            raise typer.Exit(1)
+        resolved_transport = (transport or "http").lower()
+        if resolved_transport not in ("http", "sse"):
+            typer.echo("--transport must be 'http' or 'sse'")
+            raise typer.Exit(1)
+        endpoint = base + ("/mcp" if resolved_transport == "http" else "/sse")
+        # Cast transport after validation
+        from typing import Literal, cast
+        transport_type = cast("Literal['stdio', 'sse', 'http']", resolved_transport)
+        cfg = MCPServerSettings(
+            name=base,
+            transport=transport_type,
+            url=endpoint,
+            auth=MCPServerAuthSettings(),
+        )
+    else:
+        # Server name mode
+        settings = get_settings_or_exit(config_path)
+        servers = getattr(getattr(settings, "mcp", None), "servers", {}) or {}
+        cfg = servers.get(target)
+        if not cfg:
+            typer.echo(f"Server '{target}' not found in config")
+            raise typer.Exit(1)
+        resolved_transport = getattr(cfg, "transport", "")
+        if resolved_transport == "stdio":
+            typer.echo("STDIO servers do not support OAuth")
+            raise typer.Exit(1)
+
+    # Build OAuth provider
+    provider = build_oauth_provider(cfg)
+    if provider is None:
+        typer.echo("OAuth is disabled or misconfigured for this server/identity")
+        raise typer.Exit(1)
+
+    async def _run_login():
+        try:
+            # Use appropriate transport; connect and initialize a minimal session
+            if resolved_transport == "http":
+                from mcp.client.session import ClientSession
+                from mcp.client.streamable_http import streamablehttp_client
+
+                async with streamablehttp_client(
+                    cfg.url or "",
+                    getattr(cfg, "headers", None),
+                    auth=provider,
+                ) as (read_stream, write_stream, _get_session_id):
+                    async with ClientSession(read_stream, write_stream) as session:
+                        await session.initialize()
+                        return True
+            elif resolved_transport == "sse":
+                from mcp.client.session import ClientSession
+                from mcp.client.sse import sse_client
+
+                async with sse_client(
+                    cfg.url or "",
+                    getattr(cfg, "headers", None),
+                    auth=provider,
+                ) as (read_stream, write_stream):
+                    async with ClientSession(read_stream, write_stream) as session:
+                        await session.initialize()
+                        return True
+            else:
+                return False
+        except Exception as e:
+            # Surface concise error; detailed logging is in the library
+            typer.echo(f"Login failed: {e}")
+            return False
+
+    ok = bool(run_sync(_run_login))
+    if ok:
+        from fast_agent.mcp.oauth_client import compute_server_identity
+
+        ident = compute_server_identity(cfg)
+        typer.echo(f"Authenticated. Tokens stored for identity: {ident}")
+    else:
+        raise typer.Exit(1)

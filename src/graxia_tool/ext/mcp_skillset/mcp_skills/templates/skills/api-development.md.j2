@@ -1,0 +1,423 @@
+---
+name: {{ skill_id }}
+description: |
+  {{ description }}
+version: "{{ version }}"
+category: API Development
+{% if tags -%}
+tags:
+{% for tag in tags %}
+  - {{ tag }}
+{% endfor %}
+{% endif -%}
+{% if toolchain -%}
+toolchain:
+{% for tool in toolchain %}
+  - {{ tool }}
+{% endfor %}
+{% endif -%}
+{% if frameworks -%}
+frameworks:
+{% for framework in frameworks %}
+  - {{ framework }}
+{% endfor %}
+{% endif -%}
+{% if related_skills -%}
+related_skills:
+{% for skill in related_skills %}
+  - {{ skill }}
+{% endfor %}
+{% endif -%}
+author: {{ author }}
+license: {{ license }}
+created: {{ created }}
+last_updated: {{ last_updated }}
+---
+
+# {{ name }}
+
+## Overview
+
+This skill provides comprehensive guidance for designing and implementing production-grade APIs following REST, GraphQL, or RPC patterns with modern best practices.
+
+## When to Use This Skill
+
+Use this skill when:
+- Designing new API endpoints or services
+- Implementing RESTful or GraphQL APIs
+- Building microservices architectures
+- Creating public or internal APIs
+
+## Core Principles
+
+### 1. API-First Design
+
+**Define the API contract before implementation**
+
+- Write OpenAPI/Swagger specs first
+- Define GraphQL schemas upfront
+- Version APIs from day one
+- Document all endpoints comprehensively
+
+### 2. Consistency and Predictability
+
+**Follow consistent patterns across all endpoints**
+
+```
+# REST conventions
+GET    /api/v1/users          # List users
+GET    /api/v1/users/:id      # Get specific user
+POST   /api/v1/users          # Create user
+PUT    /api/v1/users/:id      # Update user (full)
+PATCH  /api/v1/users/:id      # Update user (partial)
+DELETE /api/v1/users/:id      # Delete user
+```
+
+### 3. Proper Error Handling
+
+**Return meaningful, consistent error responses**
+
+```json
+{
+  "error": {
+    "code": "VALIDATION_ERROR",
+    "message": "Invalid input data",
+    "details": [
+      {
+        "field": "email",
+        "message": "Email format is invalid"
+      }
+    ],
+    "requestId": "req_1234567890"
+  }
+}
+```
+
+### 4. Performance and Scalability
+
+**Design for scale from the start**
+
+- Implement pagination for list endpoints
+- Use appropriate caching strategies
+- Support filtering and sorting
+- Implement rate limiting
+
+## Best Practices
+
+### REST API Design
+
+**Resource Naming**
+- Use plural nouns for collections (`/users`, not `/user`)
+- Use hierarchical structure for relationships (`/users/:id/posts`)
+- Keep URLs lowercase with hyphens (`/user-preferences`)
+- Avoid verbs in URLs (use HTTP methods instead)
+
+**HTTP Methods**
+- GET: Retrieve resources (must be idempotent)
+- POST: Create new resources
+- PUT: Replace entire resource
+- PATCH: Partial update
+- DELETE: Remove resource
+
+**Status Codes**
+- 200 OK: Successful GET, PUT, PATCH
+- 201 Created: Successful POST
+- 204 No Content: Successful DELETE
+- 400 Bad Request: Client error (validation)
+- 401 Unauthorized: Authentication required
+- 403 Forbidden: Authenticated but not authorized
+- 404 Not Found: Resource doesn't exist
+- 500 Internal Server Error: Server error
+
+### Request/Response Design
+
+**Request Bodies**
+- Use JSON for request/response bodies
+- Validate all inputs
+- Support Content-Type negotiation
+- Document required vs optional fields
+
+**Response Structure**
+```json
+{
+  "data": { /* actual response data */ },
+  "meta": {
+    "pagination": {
+      "page": 1,
+      "limit": 20,
+      "total": 100,
+      "pages": 5
+    }
+  },
+  "links": {
+    "self": "/api/v1/users?page=1",
+    "next": "/api/v1/users?page=2",
+    "last": "/api/v1/users?page=5"
+  }
+}
+```
+
+### Authentication & Authorization
+
+**Authentication Methods**
+- JWT tokens for stateless APIs
+- OAuth 2.0 for third-party integrations
+- API keys for service-to-service
+- Session-based for traditional web apps
+
+**Authorization Patterns**
+- Role-Based Access Control (RBAC)
+- Attribute-Based Access Control (ABAC)
+- Scope-based permissions
+- Resource-level permissions
+
+## Common Patterns
+
+### Pattern 1: Pagination
+
+```python
+# Cursor-based pagination (recommended for large datasets)
+@app.get("/api/v1/users")
+async def list_users(
+    cursor: str | None = None,
+    limit: int = 20
+):
+    users, next_cursor = await db.paginate_users(cursor, limit)
+    return {
+        "data": users,
+        "pagination": {
+            "next_cursor": next_cursor,
+            "limit": limit
+        }
+    }
+```
+
+### Pattern 2: Filtering and Sorting
+
+```python
+# Query parameters for filtering
+@app.get("/api/v1/users")
+async def list_users(
+    status: str | None = None,
+    role: str | None = None,
+    sort: str = "-created_at",
+    limit: int = 20
+):
+    filters = {}
+    if status:
+        filters["status"] = status
+    if role:
+        filters["role"] = role
+
+    users = await db.query_users(filters, sort, limit)
+    return {"data": users}
+```
+
+### Pattern 3: Rate Limiting
+
+```python
+# Token bucket rate limiting
+from fastapi import Request, HTTPException
+
+async def rate_limit(request: Request):
+    client_id = request.client.host
+    tokens = await redis.get(f"rate_limit:{client_id}")
+
+    if tokens and int(tokens) >= MAX_REQUESTS:
+        raise HTTPException(
+            status_code=429,
+            detail="Rate limit exceeded",
+            headers={"Retry-After": "60"}
+        )
+
+    await redis.incr(f"rate_limit:{client_id}")
+    await redis.expire(f"rate_limit:{client_id}", 60)
+```
+
+## Anti-Patterns
+
+### ❌ Avoid: Exposing Internal Structure
+
+**Don't expose database models directly**
+
+```python
+# BAD: Exposing internal model
+@app.get("/users/{id}")
+async def get_user(id: int):
+    return await User.get(id)  # Returns all fields including internal ones
+```
+
+✅ **Instead: Use DTOs/schemas**
+
+```python
+# GOOD: Using response schema
+class UserResponse(BaseModel):
+    id: int
+    name: str
+    email: str
+    created_at: datetime
+
+@app.get("/users/{id}", response_model=UserResponse)
+async def get_user(id: int):
+    user = await User.get(id)
+    return UserResponse.from_orm(user)
+```
+
+### ❌ Avoid: Overfetching and Underfetching
+
+**Don't force clients to make multiple requests for related data**
+
+✅ **Instead: Support field selection and includes**
+
+```
+# Allow clients to specify fields
+GET /api/v1/users?fields=id,name,email
+
+# Support including related resources
+GET /api/v1/users?include=posts,comments
+```
+
+### ❌ Avoid: Blocking Operations
+
+**Don't perform long-running operations synchronously**
+
+```python
+# BAD: Blocking operation
+@app.post("/process")
+async def process_data(data: dict):
+    result = expensive_computation(data)  # Blocks for minutes
+    return {"result": result}
+```
+
+✅ **Instead: Use async jobs**
+
+```python
+# GOOD: Async job pattern
+@app.post("/process")
+async def process_data(data: dict):
+    job = await queue.enqueue(expensive_computation, data)
+    return {
+        "job_id": job.id,
+        "status": "processing",
+        "status_url": f"/api/v1/jobs/{job.id}"
+    }
+```
+
+## Testing Strategy
+
+### API Contract Testing
+
+- Validate request/response schemas
+- Test all status codes
+- Verify error responses
+- Test edge cases
+
+### Integration Testing
+
+```python
+# Example: API integration test
+async def test_create_user():
+    # Arrange
+    user_data = {
+        "name": "Test User",
+        "email": "test@example.com"
+    }
+
+    # Act
+    response = await client.post("/api/v1/users", json=user_data)
+
+    # Assert
+    assert response.status_code == 201
+    assert response.json()["data"]["email"] == user_data["email"]
+```
+
+### Load Testing
+
+- Test API under realistic load
+- Identify performance bottlenecks
+- Validate rate limiting
+- Test concurrent requests
+
+## Versioning Strategies
+
+### URL Versioning (Recommended)
+```
+GET /api/v1/users
+GET /api/v2/users
+```
+
+### Header Versioning
+```
+GET /api/users
+Accept: application/vnd.api+json; version=1
+```
+
+### Backward Compatibility
+
+- Don't remove fields (deprecate instead)
+- Add new optional fields only
+- Support old and new versions during migration
+- Document deprecation timeline
+
+## Documentation
+
+### OpenAPI/Swagger
+
+```yaml
+openapi: 3.0.0
+info:
+  title: User API
+  version: 1.0.0
+paths:
+  /users:
+    get:
+      summary: List users
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserList'
+```
+
+### API Documentation Best Practices
+
+- Provide runnable examples
+- Document authentication requirements
+- Include error response examples
+- Provide SDKs for popular languages
+- Keep documentation in sync with code
+
+## Related Skills
+
+{% if related_skills -%}
+{% for skill in related_skills %}
+- **{{ skill }}**: Complementary API development expertise
+{% endfor %}
+{% else -%}
+- **web-development**: Build web applications consuming APIs
+- **testing**: Comprehensive API testing strategies
+- **database-optimization**: Optimize database queries for APIs
+- **security**: Implement API security best practices
+{% endif %}
+
+## References
+
+- REST API Design Best Practices
+- OpenAPI Specification: https://swagger.io/specification/
+- GraphQL Best Practices: https://graphql.org/learn/best-practices/
+- API Security Best Practices: https://owasp.org/www-project-api-security/
+
+## Version History
+
+- **{{ version }}** ({{ created }}): Initial version
+{% if last_updated != created -%}
+- Last updated: {{ last_updated }}
+{% endif %}

@@ -1,0 +1,1624 @@
+import asyncio
+import inspect
+import json
+import os
+import sys
+import time
+import traceback
+from abc import abstractmethod
+from collections.abc import Mapping
+from contextlib import nullcontext
+from contextvars import ContextVar
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Awaitable,
+    Callable,
+    Generic,
+    Literal,
+    Type,
+    TypeVar,
+    Union,
+    cast,
+)
+
+from mcp import Tool
+from mcp.types import (
+    GetPromptResult,
+    PromptMessage,
+)
+from pydantic_core import from_json
+
+from fast_agent.constants import (
+    CONTROL_MESSAGE_SAVE_HISTORY,
+)
+from fast_agent.context_dependent import ContextDependent
+from fast_agent.core.exceptions import AgentConfigError, ProviderKeyError, ServerConfigError
+from fast_agent.core.logging.logger import get_logger
+from fast_agent.core.prompt import Prompt
+from fast_agent.event_progress import ProgressAction
+from fast_agent.interfaces import (
+    FastAgentLLMProtocol,
+    ModelT,
+)
+from fast_agent.llm.memory import Memory, SimpleMemory
+from fast_agent.llm.model_database import ModelDatabase, ModelParameters
+from fast_agent.llm.provider_types import Provider
+from fast_agent.llm.reasoning_effort import (
+    ReasoningEffortSetting,
+    ReasoningEffortSpec,
+    validate_reasoning_setting,
+)
+from fast_agent.llm.request_param_resolution import (
+    get_provider_config,
+    initialize_base_default_params,
+    merge_request_params,
+    normalize_model_name,
+    resolve_config_default_model,
+    resolve_model_references,
+)
+from fast_agent.llm.response_telemetry import (
+    RequestTimingCapture,
+    add_timing_channel,
+    append_usage_channel,
+    start_request_timing_capture,
+)
+from fast_agent.llm.stream_types import StreamChunk
+from fast_agent.llm.structured_schema import (
+    validate_json_instance,
+    validate_json_schema_definition,
+)
+from fast_agent.llm.text_verbosity import (
+    TextVerbosityLevel,
+    TextVerbositySpec,
+    validate_text_verbosity,
+)
+from fast_agent.llm.usage_tracking import TurnUsage, UsageAccumulator
+from fast_agent.mcp.helpers.content_helpers import get_text
+from fast_agent.mcp.provider_management import ProviderManagedMCPState
+from fast_agent.types import PromptMessageExtended, RequestParams
+from fast_agent.ui.console import error_console
+
+# Define type variables locally
+MessageParamT = TypeVar("MessageParamT")
+MessageT = TypeVar("MessageT")
+
+# Forward reference for type annotations
+if TYPE_CHECKING:
+    from fast_agent.context import Context
+    from fast_agent.llm.resolved_model import ResolvedModelSpec
+
+
+# Context variable for storing MCP metadata
+_mcp_metadata_var: ContextVar[dict[str, Any] | None] = ContextVar("mcp_metadata", default=None)
+
+
+class FastAgentLLM(ContextDependent, FastAgentLLMProtocol, Generic[MessageParamT, MessageT]):
+    # Common parameter names used across providers
+    PARAM_MESSAGES = "messages"
+    PARAM_MODEL = "model"
+    PARAM_MAX_TOKENS = "maxTokens"
+    PARAM_SYSTEM_PROMPT = "systemPrompt"
+    PARAM_STOP_SEQUENCES = "stopSequences"
+    PARAM_PARALLEL_TOOL_CALLS = "parallel_tool_calls"
+    PARAM_METADATA = "metadata"
+    PARAM_USE_HISTORY = "use_history"
+    PARAM_MAX_ITERATIONS = "max_iterations"
+    PARAM_TEMPLATE_VARS = "template_vars"
+    PARAM_MCP_METADATA = "mcp_metadata"
+    PARAM_TOOL_HANDLER = "tool_execution_handler"
+    PARAM_LOOP_PROGRESS = "emit_loop_progress"
+    PARAM_TOOL_RESULT_MODE = "tool_result_mode"
+    PARAM_BATCH_CONTEXT = "batch_context"
+    PARAM_STREAMING_TIMEOUT = "streaming_timeout"
+    PARAM_SERVICE_TIER = "service_tier"
+    PARAM_STRUCTURED_SCHEMA = "structured_schema"
+    PARAM_STRUCTURED_TOOL_POLICY = "structured_tool_policy"
+
+    # Base set of fields that should always be excluded
+    BASE_EXCLUDE_FIELDS = {
+        PARAM_METADATA,
+        PARAM_TOOL_HANDLER,
+        PARAM_LOOP_PROGRESS,
+        PARAM_TOOL_RESULT_MODE,
+        PARAM_BATCH_CONTEXT,
+        PARAM_STREAMING_TIMEOUT,
+        PARAM_SERVICE_TIER,
+        PARAM_STRUCTURED_SCHEMA,
+        PARAM_STRUCTURED_TOOL_POLICY,
+    }
+
+    """
+    Implementation of the Llm Protocol - intended be subclassed for Provider
+    or behaviour specific reasons. Contains convenience and template methods.
+    """
+
+    def __init__(
+        self,
+        provider: Provider,
+        instruction: str | None = None,
+        name: str | None = None,
+        request_params: RequestParams | None = None,
+        context: Union["Context", None] = None,
+        model: str | None = None,
+        api_key: str | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """
+
+        Args:
+            provider: LLM API Provider
+            instruction: System prompt for the LLM
+            name: Name for the LLM (usually attached Agent name)
+            request_params: RequestParams to configure LLM behaviour
+            context: Application context
+            model: Optional model name override
+            **kwargs: Additional provider-specific parameters
+        """
+        # Extract request_params before super() call
+        self._init_request_params = request_params
+        raw_resolved_model_spec = kwargs.pop("resolved_model_spec", None)
+        self._resolved_model_spec = raw_resolved_model_spec
+        self._init_base_url = kwargs.pop("base_url", None)
+        raw_default_headers = kwargs.pop("default_headers", None)
+        normalized_default_headers: dict[str, str] | None = None
+        if raw_default_headers is not None:
+            if not isinstance(raw_default_headers, Mapping):
+                raise TypeError("default_headers must be a mapping[str, str] when provided")
+            normalized_default_headers = {}
+            for key, value in raw_default_headers.items():
+                if not isinstance(key, str) or not isinstance(value, str):
+                    raise TypeError("default_headers must contain only string keys and values")
+                normalized_default_headers[key] = value
+        self._init_default_headers = normalized_default_headers
+        # Pop long_context before passing kwargs to ContextDependent;
+        # subclasses (e.g. AnthropicLLM) may pop it first for their own handling.
+        long_context_requested = kwargs.pop("long_context", False)
+        super().__init__(context=context, **kwargs)
+        self.logger = get_logger(__name__)
+        self.executor = self.context.executor
+        self.name: str = name or "fast-agent"
+        self.instruction = instruction
+        self._provider = provider
+        # memory contains provider specific API types.
+        self.history: Memory[MessageParamT] = SimpleMemory[MessageParamT]()
+        self._structured_tool_defer_info_logged = False
+
+        # Initialize the display component
+        from fast_agent.ui.console_display import ConsoleDisplay
+
+        self.display = ConsoleDisplay(config=self.context.config)
+
+        # Some providers may resolve model metadata during default param initialization
+        # and require API key access in that path.
+        self._init_api_key = api_key
+
+        # Initialize default parameters, passing model info
+        model_kwargs = kwargs.copy()
+        if model:
+            model_kwargs["model"] = model
+        self.default_request_params = self._initialize_default_params(model_kwargs)
+
+        # Merge with provided params if any
+        if self._init_request_params:
+            self.default_request_params = self._merge_request_params(
+                self.default_request_params, self._init_request_params
+            )
+
+        # Cache effective model name for type-safe access
+        self._model_name: str | None = self.default_request_params.model
+        if self._resolved_model_spec is None:
+            from fast_agent.llm.model_factory import ModelConfig
+            from fast_agent.llm.resolved_model import ResolvedModelSpec, resolve_base_model_params
+
+            fallback_model_name = self._model_name or ""
+            fallback_model_config = ModelConfig(
+                provider=provider,
+                model_name=fallback_model_name,
+            )
+            self._resolved_model_spec = ResolvedModelSpec(
+                raw_input=fallback_model_name,
+                selected_model_name=fallback_model_name,
+                source="direct",
+                model_config=fallback_model_config,
+                provider=provider,
+                wire_model_name=fallback_model_name,
+                model_params=resolve_base_model_params(
+                    provider=provider,
+                    model_name=fallback_model_name,
+                )
+                if fallback_model_name
+                else None,
+            )
+
+        # Reasoning effort configuration (provider-neutral)
+        self._reasoning_effort: ReasoningEffortSetting | None = None
+        self._reasoning_effort_spec: ReasoningEffortSpec | None = (
+            self._resolved_model_spec.reasoning_effort_spec
+        )
+
+        # Text verbosity configuration (provider-neutral)
+        self._text_verbosity: TextVerbosityLevel | None = None
+        self._text_verbosity_spec: TextVerbositySpec | None = (
+            self._resolved_model_spec.text_verbosity_spec
+        )
+
+        # Context window override — set by providers that support explicit
+        # extended-context opt-ins. Defaults to None (use ModelDatabase value).
+        self._context_window_override: int | None = None
+
+        # Warn if long_context was requested but this provider didn't handle it
+        if long_context_requested and self._context_window_override is None:
+            self.logger.warning(
+                f"Long context (context=1m) is not supported for provider "
+                f"'{provider.value}'. Ignoring."
+            )
+
+        self.verb = kwargs.get("verb")
+
+        # Initialize usage tracking
+        self._usage_accumulator = UsageAccumulator()
+        effective_context_window = self._context_window_override
+        if effective_context_window is None and self._resolved_model_matches(self._model_name):
+            effective_context_window = self._resolved_model_spec.context_window
+        if effective_context_window is not None:
+            self._usage_accumulator.set_context_window_size(effective_context_window)
+        self._stream_listeners: set[Callable[[StreamChunk], None]] = set()
+        self._tool_stream_listeners: set[Callable[[str, dict[str, Any] | None], None]] = set()
+        self.retry_count = self._resolve_retry_count()
+        self.retry_backoff_seconds: float = 10.0
+        self._provider_managed_mcp_state = ProviderManagedMCPState()
+
+    def _resolved_model_matches(self, model_name: str | None) -> bool:
+        if not model_name:
+            return False
+
+        resolved_key = ModelDatabase.normalize_model_name(self._resolved_model_spec.wire_model_name)
+        model_key = ModelDatabase.normalize_model_name(model_name)
+        return bool(resolved_key and model_key and resolved_key == model_key)
+
+    def _get_model_params(self, model_name: str | None) -> ModelParameters | None:
+        if not model_name:
+            return None
+
+        resolved_params = self._resolved_model_spec.model_params
+        if resolved_params is not None and self._resolved_model_matches(model_name):
+            return resolved_params
+
+        return ModelDatabase.get_model_params(model_name)
+
+    def _get_model_reasoning(self, model_name: str | None) -> str | None:
+        params = self._get_model_params(model_name)
+        return params.reasoning if params is not None else None
+
+    def _get_model_reasoning_effort_spec(
+        self, model_name: str | None
+    ) -> ReasoningEffortSpec | None:
+        params = self._get_model_params(model_name)
+        return params.reasoning_effort_spec if params is not None else None
+
+    def _get_model_text_verbosity_spec(self, model_name: str | None) -> TextVerbositySpec | None:
+        params = self._get_model_params(model_name)
+        return params.text_verbosity_spec if params is not None else None
+
+    def _get_model_json_mode(self, model_name: str | None) -> str | None:
+        params = self._get_model_params(model_name)
+        return params.json_mode if params is not None else None
+
+    def _get_model_structured_tool_policy(
+        self, model_name: str | None
+    ) -> Literal["always", "defer", "no_tools"] | None:
+        params = self._get_model_params(model_name)
+        return params.structured_tool_policy if params is not None else None
+
+    def _default_structured_tool_policy(
+        self, model_name: str | None
+    ) -> Literal["always", "defer", "no_tools"]:
+        del model_name
+        return "always"
+
+    def _resolve_structured_tool_policy(
+        self,
+        request_params: RequestParams,
+    ) -> Literal["always", "defer", "no_tools"]:
+        policy = request_params.structured_tool_policy
+        if policy != "auto":
+            return policy
+
+        model_name = request_params.model or self.default_request_params.model or self._model_name
+        model_policy = self._get_model_structured_tool_policy(model_name)
+        if model_policy is not None:
+            return model_policy
+        return self._default_structured_tool_policy(model_name)
+
+    def resolve_structured_tool_policy(
+        self,
+        request_params: RequestParams,
+    ) -> Literal["always", "defer", "no_tools"]:
+        return self._resolve_structured_tool_policy(request_params)
+
+    def _should_defer_structured_schema_for_tools(
+        self,
+        messages: list[PromptMessageExtended],
+        request_params: RequestParams,
+        tools: list[Tool] | None,
+    ) -> bool:
+        return self._should_suppress_structured_schema_for_tools(messages, request_params, tools)
+
+    def _has_tool_results(self, messages: list[PromptMessageExtended]) -> bool:
+        return any(message.tool_results for message in messages)
+
+    def _has_structured_intent(self, request_params: RequestParams) -> bool:
+        return (
+            request_params.structured_schema is not None
+            or request_params.response_format is not None
+        )
+
+    def _should_suppress_structured_schema_for_tools(
+        self,
+        messages: list[PromptMessageExtended],
+        request_params: RequestParams,
+        tools: list[Tool] | None,
+    ) -> bool:
+        return (
+            request_params.structured_schema is not None
+            and bool(tools)
+            and self._resolve_structured_tool_policy(request_params) == "defer"
+            and not self._has_tool_results(messages)
+        )
+
+    def _should_suppress_tools_for_structured_final(
+        self,
+        messages: list[PromptMessageExtended],
+        request_params: RequestParams,
+        tools: list[Tool] | None,
+    ) -> bool:
+        return (
+            self._has_structured_intent(request_params)
+            and bool(tools)
+            and (
+                self._resolve_structured_tool_policy(request_params) == "no_tools"
+                or (
+                    self._resolve_structured_tool_policy(request_params) == "defer"
+                    and self._has_tool_results(messages)
+                )
+            )
+        )
+
+    def _get_model_context_window(self, model_name: str | None) -> int | None:
+        params = self._get_model_params(model_name)
+        return params.context_window if params is not None else None
+
+    def _get_model_long_context_window(self, model_name: str | None) -> int | None:
+        params = self._get_model_params(model_name)
+        return params.long_context_window if params is not None else None
+
+    def _get_model_stream_mode(self, model_name: str | None) -> Literal["openai", "manual"]:
+        params = self._get_model_params(model_name)
+        return params.stream_mode if params is not None else "openai"
+
+    def _get_model_cache_ttl(self, model_name: str | None) -> Literal["5m", "1h"] | None:
+        params = self._get_model_params(model_name)
+        return params.cache_ttl if params is not None else None
+
+    def _get_model_response_transports(
+        self,
+        model_name: str | None,
+    ) -> tuple[Literal["sse", "websocket"], ...] | None:
+        params = self._get_model_params(model_name)
+        return params.response_transports if params is not None else None
+
+    def _get_model_response_websocket_providers(
+        self,
+        model_name: str | None,
+    ) -> tuple[Provider, ...] | None:
+        params = self._get_model_params(model_name)
+        return params.response_websocket_providers if params is not None else None
+
+    def _get_model_response_service_tiers(
+        self,
+        model_name: str | None,
+    ) -> tuple[Literal["fast", "flex"], ...] | None:
+        params = self._get_model_params(model_name)
+        return params.response_service_tiers if params is not None else None
+
+    def _get_model_anthropic_web_search_version(self, model_name: str | None) -> str | None:
+        params = self._get_model_params(model_name)
+        return params.anthropic_web_search_version if params is not None else None
+
+    def _get_model_anthropic_web_fetch_version(self, model_name: str | None) -> str | None:
+        params = self._get_model_params(model_name)
+        return params.anthropic_web_fetch_version if params is not None else None
+
+    def _get_model_anthropic_required_betas(self, model_name: str | None) -> tuple[str, ...] | None:
+        params = self._get_model_params(model_name)
+        return params.anthropic_required_betas if params is not None else None
+
+    def _get_model_anthropic_task_budget_supported(self, model_name: str | None) -> bool:
+        params = self._get_model_params(model_name)
+        return bool(params.anthropic_task_budget_supported) if params is not None else False
+
+    def set_reasoning_effort(self, setting: ReasoningEffortSetting | None) -> None:
+        if setting is None:
+            self._reasoning_effort = None
+            return
+
+        if self._reasoning_effort_spec:
+            self._reasoning_effort = validate_reasoning_setting(
+                setting, self._reasoning_effort_spec
+            )
+        else:
+            self._reasoning_effort = setting
+
+    @property
+    def reasoning_effort(self) -> ReasoningEffortSetting | None:
+        return self._reasoning_effort
+
+    @property
+    def reasoning_effort_spec(self) -> ReasoningEffortSpec | None:
+        return self._reasoning_effort_spec
+
+    def set_text_verbosity(self, value: TextVerbosityLevel | None) -> None:
+        if value is None:
+            self._text_verbosity = None
+            return
+
+        self._text_verbosity = validate_text_verbosity(value, self._text_verbosity_spec)
+
+    @property
+    def text_verbosity(self) -> TextVerbosityLevel | None:
+        return self._text_verbosity
+
+    @property
+    def text_verbosity_spec(self) -> TextVerbositySpec | None:
+        return self._text_verbosity_spec
+
+    @property
+    def web_search_supported(self) -> bool:
+        """Whether provider-side web search is supported by this model/provider."""
+        return False
+
+    @property
+    def web_search_enabled(self) -> bool:
+        """Whether provider-side web search is enabled for this LLM instance."""
+        return False
+
+    def set_web_search_enabled(self, value: bool | None) -> None:
+        if value is not None and not self.web_search_supported:
+            raise ValueError("Current model does not support web search configuration.")
+
+    @property
+    def x_search_supported(self) -> bool:
+        """Whether provider-side X Search is supported by this model/provider."""
+        return False
+
+    @property
+    def x_search_enabled(self) -> bool:
+        """Whether provider-side X Search is enabled for this LLM instance."""
+        return False
+
+    def set_x_search_enabled(self, value: bool | None) -> None:
+        if value is not None and not self.x_search_supported:
+            raise ValueError("Current model does not support X Search configuration.")
+
+    @property
+    def web_fetch_supported(self) -> bool:
+        """Whether provider-side web fetch is supported by this model/provider."""
+        return False
+
+    @property
+    def web_fetch_enabled(self) -> bool:
+        """Whether provider-side web fetch is enabled for this LLM instance."""
+        return False
+
+    def set_web_fetch_enabled(self, value: bool | None) -> None:
+        if value is not None and not self.web_fetch_supported:
+            raise ValueError("Current model does not support web fetch configuration.")
+
+    @property
+    def task_budget_supported(self) -> bool:
+        """Whether provider-side task_budget selection is supported."""
+        return False
+
+    @property
+    def task_budget_tokens(self) -> int | None:
+        """Current provider-side task_budget selection for this LLM instance."""
+        return None
+
+    def set_task_budget_tokens(self, value: int | None) -> None:
+        if value is not None and not self.task_budget_supported:
+            raise ValueError("Current model does not support task budget configuration.")
+
+    @property
+    def service_tier_supported(self) -> bool:
+        """Whether provider-side service tier selection is supported."""
+        return False
+
+    @property
+    def available_service_tiers(self) -> tuple[Literal["fast", "flex"], ...]:
+        """Ordered provider-side service tier options available to this LLM instance."""
+        return ()
+
+    @property
+    def service_tier(self) -> Literal["fast", "flex"] | None:
+        """Current provider-side service tier selection for this LLM instance."""
+        return None
+
+    def set_service_tier(self, value: Literal["fast", "flex"] | None) -> None:
+        if value is not None and not self.service_tier_supported:
+            raise ValueError("Current model does not support service tier configuration.")
+
+    def _get_provider_config(self) -> Any | None:
+        """Return provider-specific config section when available."""
+        return get_provider_config(
+            context_config=getattr(self.context, "config", None),
+            provider_value=getattr(self.provider, "value", None),
+            config_section=getattr(self, "config_section", None),
+            fallback_sections=self._provider_config_fallback_sections(),
+        )
+
+    def _provider_config_sections(self) -> tuple[str, ...]:
+        section_name = getattr(self, "config_section", None) or getattr(
+            self.provider, "value", None
+        )
+        return (section_name,) if section_name else ()
+
+    def _provider_config_fallback_sections(self) -> tuple[str, ...]:
+        return ()
+
+    def _resolve_config_default_model(self) -> str | None:
+        """Resolve optional provider-level default model from config."""
+        return resolve_config_default_model(
+            context_config=getattr(self.context, "config", None),
+            provider_value=getattr(self.provider, "value", None),
+            config_section=getattr(self, "config_section", None),
+            fallback_sections=self._provider_config_fallback_sections(),
+        )
+
+    @staticmethod
+    def _normalize_model_name(value: str | None) -> str | None:
+        return normalize_model_name(value)
+
+    def _resolve_model_references(self, value: str) -> str:
+        return resolve_model_references(context=self.context, value=value)
+
+    def _resolve_default_model_name(
+        self,
+        requested_model: str | None,
+        hardcoded_default: str | None,
+    ) -> str | None:
+        """Resolve model name using explicit value, then provider config, then fallback."""
+        normalized_requested = self._normalize_model_name(requested_model)
+        if normalized_requested:
+            return self._resolve_model_references(normalized_requested)
+
+        config_default = self._resolve_config_default_model()
+        if config_default:
+            return self._resolve_model_references(config_default)
+
+        normalized_fallback = self._normalize_model_name(hardcoded_default)
+        if not normalized_fallback:
+            return None
+
+        return self._resolve_model_references(normalized_fallback)
+
+    def _initialize_default_params_with_model_fallback(
+        self,
+        kwargs: dict[str, Any],
+        hardcoded_default: str | None,
+    ) -> RequestParams:
+        """Initialize params via shared model resolution precedence."""
+        chosen_model = self._resolve_default_model_name(kwargs.get("model"), hardcoded_default)
+        resolved_kwargs = dict(kwargs)
+        if chosen_model is not None:
+            resolved_kwargs["model"] = chosen_model
+
+        base_params = self._initialize_base_default_params(resolved_kwargs)
+        base_params.model = chosen_model
+        return base_params
+
+    def _initialize_default_params(self, kwargs: dict[str, Any]) -> RequestParams:
+        """Initialize default parameters for the LLM.
+        Should be overridden by provider implementations to set provider-specific defaults."""
+        return self._initialize_base_default_params(kwargs)
+
+    def _initialize_base_default_params(self, kwargs: dict[str, Any]) -> RequestParams:
+        """Provider-agnostic default request params."""
+        return initialize_base_default_params(
+            instruction=self.instruction,
+            kwargs=kwargs,
+            resolved_model_spec=self._resolved_model_spec,
+        )
+
+    async def _execute_with_retry(
+        self,
+        func: Callable[..., Awaitable[Any]],
+        *args: Any,
+        on_final_error: Callable[[Exception], Awaitable[Any] | Any] | None = None,
+        **kwargs: Any,
+    ) -> Any:
+        """
+        Executes a function with robust retry logic for transient API errors.
+        """
+        retries = max(0, int(self.retry_count))
+
+        def _is_fatal_error(e: Exception) -> bool:
+            if isinstance(e, (KeyboardInterrupt, AgentConfigError, ServerConfigError)):
+                return True
+            if isinstance(e, ProviderKeyError):
+                msg = str(e).lower()
+                # Retry on Rate Limits (429, Quota, Overloaded)
+                keywords = [
+                    "429",
+                    "503",
+                    "quota",
+                    "exhausted",
+                    "overloaded",
+                    "unavailable",
+                    "timeout",
+                ]
+                if any(k in msg for k in keywords):
+                    return False
+                return True
+            return False
+
+        last_error = None
+
+        for attempt in range(retries + 1):
+            try:
+                # Await the async function
+                return await func(*args, **kwargs)
+            except Exception as e:
+                if _is_fatal_error(e):
+                    raise e
+
+                last_error = e
+                if attempt < retries:
+                    wait_time = self.retry_backoff_seconds * (attempt + 1)
+
+                    if os.environ.get("FAST_AGENT_WEBDEBUG"):
+                        print(
+                            "[webdebug] provider call failed "
+                            f"attempt={attempt + 1}/{retries + 1} "
+                            f"error_type={type(e).__name__}",
+                            file=sys.stderr,
+                        )
+                        traceback.print_exception(type(e), e, e.__traceback__)
+
+                    try:
+                        from fast_agent.ui.progress_display import progress_display
+                    except ImportError:
+                        paused_progress = nullcontext()
+                    else:
+                        paused_progress = progress_display.paused()
+
+                    with paused_progress:
+                        error_console.print(
+                            f"\n[yellow]▲ Provider Error: {str(e)[:300]}...[/yellow]"
+                        )
+                        error_console.print(
+                            f"[dim]⟳ Retrying in {wait_time}s... (Attempt {attempt + 1}/{retries})[/dim]"
+                        )
+
+                    await asyncio.sleep(wait_time)
+
+        if last_error:
+            handler = on_final_error or getattr(self, "_handle_retry_failure", None)
+            if handler:
+                handled = handler(last_error)
+                if inspect.isawaitable(handled):
+                    handled = await handled
+                if handled is not None:
+                    return handled
+
+            raise last_error
+
+        # This line satisfies Pylance that we never implicitly return None
+        raise RuntimeError("Retry loop finished without success or exception")
+
+    def _handle_retry_failure(self, error: Exception) -> Any | None:
+        """
+        Optional hook for providers to convert an exhausted retry into a user-facing response.
+
+        Return a non-None value to short-circuit raising the final exception.
+        """
+        return None
+
+    def _resolve_retry_count(self) -> int:
+        """Resolve retries from config first, then env, defaulting to 2."""
+        config_retries = None
+        try:
+            config_retries = getattr(self.context.config, "llm_retries", None)
+        except Exception:
+            config_retries = None
+
+        if config_retries is not None:
+            try:
+                return int(config_retries)
+            except (TypeError, ValueError):
+                pass
+
+        env_retries = os.getenv("FAST_AGENT_RETRIES")
+        if env_retries is not None:
+            try:
+                return int(env_retries)
+            except (TypeError, ValueError):
+                pass
+
+        return 2
+
+    async def generate(
+        self,
+        messages: list[PromptMessageExtended],
+        request_params: RequestParams | None = None,
+        tools: list[Tool] | None = None,
+    ) -> PromptMessageExtended:
+        """
+        Generate a completion using normalized message lists.
+
+        This is the primary LLM interface that works directly with
+        list[PromptMessageExtended] for efficient internal usage.
+
+        Args:
+            messages: List of PromptMessageExtended objects
+            request_params: Optional parameters to configure the LLM request
+            tools: Optional list of tools available to the LLM
+
+        Returns:
+            A PromptMessageExtended containing the Assistant response
+
+        Raises:
+            asyncio.CancelledError: If the operation is cancelled via task.cancel()
+        """
+        # TODO -- create a "fast-agent" control role rather than magic strings
+
+        if messages[-1].first_text().startswith(CONTROL_MESSAGE_SAVE_HISTORY):
+            parts: list[str] = messages[-1].first_text().split(" ", 1)
+            if len(parts) > 1:
+                filename: str = parts[1].strip()
+            else:
+                from datetime import datetime
+
+                timestamp = datetime.now().strftime("%y_%m_%d_%H_%M")
+                filename = f"{timestamp}-conversation.json"
+            await self._save_history(filename, messages)
+            return Prompt.assistant(f"History saved to {filename}")
+
+        final_request_params = self.get_request_params(request_params)
+        prepared_messages, prepared_request_params = self._prepare_structured_request(
+            messages,
+            final_request_params,
+            tools,
+        )
+        prepared_tools = tools
+        suppress_final_tools = self._should_suppress_tools_for_structured_final(
+            prepared_messages,
+            prepared_request_params,
+            tools,
+        )
+        if suppress_final_tools:
+            prepared_tools = None
+        suppress_schema = self._should_suppress_structured_schema_for_tools(
+            messages,
+            final_request_params,
+            tools,
+        )
+        if suppress_schema or suppress_final_tools:
+            policy = self._resolve_structured_tool_policy(final_request_params)
+            model_name = (
+                prepared_request_params.model
+                or self.default_request_params.model
+                or self._model_name
+            )
+            if policy == "defer" and not self._structured_tool_defer_info_logged:
+                self.logger.info(
+                    "Model/provider does not reliably support tools and structured output "
+                    "in the same request; using two-phase structured tool flow: tools first, "
+                    "schema-only final answer."
+                )
+                self._structured_tool_defer_info_logged = True
+            self.logger.debug(
+                "structured_tools_policy",
+                data={
+                    "model": model_name,
+                    "json_mode": self._get_model_json_mode(model_name),
+                    "structured_tool_policy": policy,
+                    "phase": "structured_final" if suppress_final_tools else "tool_selection",
+                    "suppressed_schema": suppress_schema,
+                    "suppressed_tools": suppress_final_tools,
+                },
+            )
+
+        # Store MCP metadata in context variable
+        if prepared_request_params.mcp_metadata:
+            _mcp_metadata_var.set(prepared_request_params.mcp_metadata)
+
+        # The caller supplies the full conversation to send
+        full_history = prepared_messages
+
+        timing_capture, cleanup_timing_capture = self._start_request_timing_capture()
+        try:
+            assistant_response = await self._execute_with_retry(
+                self._apply_prompt_provider_specific,
+                full_history,
+                prepared_request_params,
+                prepared_tools,
+            )
+        finally:
+            cleanup_timing_capture()
+        end_time = time.perf_counter()
+        self._add_timing_channel(
+            assistant_response,
+            timing_capture.start_time,
+            end_time,
+            ttft_ms=timing_capture.ttft_ms,
+            time_to_response_ms=timing_capture.time_to_response_ms,
+        )
+
+        self.usage_accumulator.count_tools(len(assistant_response.tool_calls or {}))
+        self._append_usage_channel(assistant_response)
+
+        return assistant_response
+
+    def _append_usage_channel(self, response: PromptMessageExtended) -> None:
+        append_usage_channel(response, self.usage_accumulator)
+
+    def _add_timing_channel(
+        self,
+        response: PromptMessageExtended,
+        start_time: float,
+        end_time: float,
+        *,
+        ttft_ms: float | None = None,
+        time_to_response_ms: float | None = None,
+    ) -> None:
+        """Add timing data to response channels if not already present.
+
+        Preserves original timing when loading saved history.
+        """
+        add_timing_channel(
+            response,
+            start_time,
+            end_time,
+            ttft_ms=ttft_ms,
+            time_to_response_ms=time_to_response_ms,
+        )
+
+    def _start_request_timing_capture(self) -> tuple[RequestTimingCapture, Callable[[], None]]:
+        return start_request_timing_capture(self)
+
+    def _build_usage_payload(self) -> dict[str, Any] | None:
+        from fast_agent.llm.response_telemetry import build_usage_payload
+
+        return build_usage_payload(self.usage_accumulator)
+
+    def _serialize_raw_usage(self, raw_usage: object | None) -> object:
+        from fast_agent.llm.response_telemetry import serialize_raw_usage
+
+        return serialize_raw_usage(raw_usage)
+
+    @abstractmethod
+    async def _apply_prompt_provider_specific(
+        self,
+        multipart_messages: list["PromptMessageExtended"],
+        request_params: RequestParams | None = None,
+        tools: list[Tool] | None = None,
+        is_template: bool = False,
+    ) -> PromptMessageExtended:
+        """
+        Provider-specific implementation of apply_prompt_template.
+        This default implementation handles basic text content for any LLM type.
+        Provider-specific subclasses should override this method to handle
+        multimodal content appropriately.
+
+        Args:
+            multipart_messages: List of PromptMessageExtended objects parsed from the prompt template
+            request_params: Optional parameters to configure the LLM request
+            tools: Optional list of tools available to the LLM
+            is_template: Whether this is a template application
+
+        Returns:
+            String representation of the assistant's response if generated,
+            or the last assistant message in the prompt
+        """
+
+    async def structured(
+        self,
+        messages: list[PromptMessageExtended],
+        model: Type[ModelT],
+        request_params: RequestParams | None = None,
+    ) -> tuple[ModelT | None, PromptMessageExtended]:
+        """
+        Generate a structured response using normalized message lists.
+
+        This is the primary LLM interface for structured output that works directly with
+        list[PromptMessageExtended] for efficient internal usage.
+
+        Args:
+            messages: List of PromptMessageExtended objects
+            model: The Pydantic model class to parse the response into
+            request_params: Optional parameters to configure the LLM request
+
+        Returns:
+            Tuple of (parsed model instance or None, assistant response message)
+        """
+
+        final_request_params = self.get_request_params(request_params)
+        if final_request_params.mcp_metadata:
+            _mcp_metadata_var.set(final_request_params.mcp_metadata)
+
+        timing_capture, cleanup_timing_capture = self._start_request_timing_capture()
+        try:
+            result_or_response = await self._execute_with_retry(
+                self._apply_prompt_provider_specific_structured,
+                messages,
+                model,
+                final_request_params,
+                on_final_error=self._handle_retry_failure,
+            )
+        finally:
+            cleanup_timing_capture()
+
+        if isinstance(result_or_response, PromptMessageExtended):
+            result, assistant_response = self._structured_from_multipart(
+                result_or_response,
+                model,
+            )
+        else:
+            result, assistant_response = result_or_response
+
+        end_time = time.perf_counter()
+        self._add_timing_channel(
+            assistant_response,
+            timing_capture.start_time,
+            end_time,
+            ttft_ms=timing_capture.ttft_ms,
+            time_to_response_ms=timing_capture.time_to_response_ms,
+        )
+
+        self.usage_accumulator.count_tools(len(assistant_response.tool_calls or {}))
+        self._append_usage_channel(assistant_response)
+
+        return result, assistant_response
+
+    async def structured_schema(
+        self,
+        messages: list[PromptMessageExtended],
+        schema: dict[str, Any],
+        request_params: RequestParams | None = None,
+    ) -> tuple[Any | None, PromptMessageExtended]:
+        """
+        Generate a structured response using a raw JSON Schema.
+
+        Args:
+            messages: List of PromptMessageExtended objects
+            schema: JSON Schema object used to constrain and validate the response
+            request_params: Optional parameters to configure the LLM request
+
+        Returns:
+            Tuple of (parsed JSON-compatible data or None, assistant response message)
+        """
+
+        normalized_schema = validate_json_schema_definition(schema)
+        final_request_params = self.get_request_params(request_params).model_copy(
+            update={"structured_schema": normalized_schema}
+        )
+
+        assistant_response = await self.generate(messages, final_request_params)
+        return self.parse_structured_schema_response(
+            assistant_response,
+            normalized_schema,
+        )
+
+    def parse_structured_schema_response(
+        self,
+        message: PromptMessageExtended,
+        schema: dict[str, Any],
+    ) -> tuple[Any | None, PromptMessageExtended]:
+        """Parse and validate an assistant response against a raw JSON Schema."""
+        return self._structured_schema_from_multipart(message, schema)
+
+    @staticmethod
+    def model_to_response_format(
+        model: Type[Any],
+    ) -> Any:
+        """
+        Convert a pydantic model to the appropriate response format schema.
+        This allows for reuse in multiple provider implementations.
+
+        Args:
+            model: The pydantic model class to convert to a schema
+
+        Returns:
+            Provider-agnostic schema representation or NotGiven if conversion fails
+        """
+        from openai.lib._parsing import type_to_response_format_param as _type_to_response_format
+
+        return _type_to_response_format(model)
+
+    @staticmethod
+    def model_to_schema_str(
+        model: Type[Any],
+    ) -> str:
+        """
+        Convert a pydantic model to a schema string representation.
+        This provides a simpler interface for provider implementations
+        that need a string representation.
+
+        Args:
+            model: The pydantic model class to convert to a schema
+
+        Returns:
+            Schema as a string, or empty string if conversion fails
+        """
+
+        try:
+            schema = model.model_json_schema()
+            return json.dumps(schema)
+        except Exception:
+            return ""
+
+    @staticmethod
+    def schema_to_response_format(
+        schema: dict[str, Any],
+        *,
+        name: str = "structured_output",
+        strict: bool = True,
+    ) -> dict[str, Any]:
+        return {
+            "type": "json_schema",
+            "json_schema": {
+                "name": name,
+                "strict": strict,
+                "schema": schema,
+            },
+        }
+
+    @staticmethod
+    def schema_to_schema_str(
+        schema: dict[str, Any],
+    ) -> str:
+        try:
+            return json.dumps(schema)
+        except Exception:
+            return ""
+
+    async def _apply_prompt_provider_specific_structured(
+        self,
+        multipart_messages: list[PromptMessageExtended],
+        model: Type[ModelT],
+        request_params: RequestParams | None = None,
+    ) -> tuple[ModelT | None, PromptMessageExtended]:
+        """Base class attempts to parse JSON - subclasses can use provider specific functionality"""
+
+        request_params = self.get_request_params(request_params)
+
+        if not request_params.response_format:
+            schema = self.model_to_response_format(model)
+            from openai import NotGiven
+
+            if schema is not NotGiven:
+                request_params.response_format = schema
+
+        result: PromptMessageExtended = await self._apply_prompt_provider_specific(
+            multipart_messages, request_params
+        )
+        return self._structured_from_multipart(result, model)
+
+    async def _apply_prompt_provider_specific_structured_schema(
+        self,
+        multipart_messages: list[PromptMessageExtended],
+        schema: dict[str, Any],
+        request_params: RequestParams | None = None,
+    ) -> PromptMessageExtended | tuple[Any | None, PromptMessageExtended]:
+        """Base class attempts structured JSON parsing after a normal provider call."""
+
+        del schema
+        request_params = self.get_request_params(request_params)
+
+        if multipart_messages and multipart_messages[-1].role == "assistant":
+            return multipart_messages[-1]
+
+        return await self._apply_prompt_provider_specific(multipart_messages, request_params)
+
+    def _structured_from_multipart(
+        self, message: PromptMessageExtended, model: Type[ModelT]
+    ) -> tuple[ModelT | None, PromptMessageExtended]:
+        """Parse the content of a PromptMessage and return the structured model and message itself"""
+        try:
+            text = get_text(message.content[-1]) or ""
+            text = self._prepare_structured_text(text)
+            json_data = from_json(text, allow_partial=True)
+            validated_model = model.model_validate(json_data)
+            return validated_model, message
+        except ValueError as e:
+            logger = get_logger(__name__)
+            logger.warning(f"Failed to parse structured response: {str(e)}")
+            return None, message
+
+    def _structured_schema_from_multipart(
+        self,
+        message: PromptMessageExtended,
+        schema: dict[str, Any],
+    ) -> tuple[Any | None, PromptMessageExtended]:
+        """Parse and validate a JSON response against a raw JSON Schema."""
+        try:
+            text = ""
+            if message.content:
+                text = get_text(message.content[-1]) or ""
+            text = self._prepare_structured_text(text)
+            json_data = json.loads(text)
+            validate_json_instance(json_data, schema)
+            return json_data, message
+        except Exception as e:
+            logger = get_logger(__name__)
+            logger.warning(f"Failed to parse structured response: {str(e)}")
+            return None, message
+
+    def _prepare_structured_text(self, text: str) -> str:
+        """Hook for subclasses to adjust structured output text before parsing."""
+        return text
+
+    def _prepare_structured_request(
+        self,
+        messages: list[PromptMessageExtended],
+        request_params: RequestParams,
+        tools: list[Tool] | None = None,
+    ) -> tuple[list[PromptMessageExtended], RequestParams]:
+        """Hook for providers to adapt structured-output intent before generation."""
+        del tools
+        return messages, request_params
+
+    def record_templates(self, templates: list[PromptMessageExtended]) -> None:
+        """Hook for providers that need template visibility (e.g., caching)."""
+        return
+
+    def _precall(self, multipart_messages: list[PromptMessageExtended]) -> None:
+        """Pre-call hook to modify the message before sending it to the provider."""
+        # No-op placeholder; history is managed by the agent
+
+    def chat_turn(self) -> int:
+        """Return the current chat turn number"""
+        return 1 + len(self._usage_accumulator.turns)
+
+    def prepare_provider_arguments(
+        self,
+        base_args: dict,
+        request_params: RequestParams,
+        exclude_fields: set | None = None,
+    ) -> dict:
+        """
+        Prepare arguments for provider API calls by merging request parameters.
+
+        Args:
+            base_args: Base arguments dictionary with provider-specific required parameters
+            params: The RequestParams object containing all parameters
+            exclude_fields: Set of field names to exclude from params. If None, uses BASE_EXCLUDE_FIELDS.
+
+        Returns:
+            Complete arguments dictionary with all applicable parameters
+        """
+        # Start with base arguments
+        arguments = base_args.copy()
+
+        # Combine base exclusions with provider-specific exclusions
+        final_exclude_fields = self.BASE_EXCLUDE_FIELDS.copy()
+        if exclude_fields:
+            final_exclude_fields.update(exclude_fields)
+
+        # Add all fields from params that aren't explicitly excluded
+        # Ensure model_dump only includes set fields if that's the desired behavior,
+        # or adjust exclude_unset=True/False as needed.
+        # Default Pydantic v2 model_dump is exclude_unset=False
+        params_dict = request_params.model_dump(exclude=final_exclude_fields)
+
+        for key, value in params_dict.items():
+            # Only add if not None and not already in base_args (base_args take precedence)
+            # or if None is a valid value for the provider, this logic might need adjustment.
+            if value is not None and key not in arguments:
+                arguments[key] = value
+            elif value is not None and key in arguments and arguments[key] is None:
+                # Allow overriding a None in base_args with a set value from params
+                arguments[key] = value
+
+        # Finally, add any metadata fields as a last layer of overrides
+        # This ensures metadata can override anything previously set if keys conflict.
+        if request_params.metadata:
+            arguments.update(request_params.metadata)
+
+        return arguments
+
+    def _merge_request_params(
+        self, default_params: RequestParams, provided_params: RequestParams
+    ) -> RequestParams:
+        """Merge default and provided request parameters"""
+        return merge_request_params(default_params, provided_params)
+
+    def get_request_params(
+        self,
+        request_params: RequestParams | None = None,
+    ) -> RequestParams:
+        """
+        Get request parameters with merged-in defaults and overrides.
+        Args:
+            request_params: The request parameters to use as overrides.
+            default: The default request parameters to use as the base.
+                If unspecified, self.default_request_params will be used.
+        """
+
+        # If user provides overrides, merge them with defaults
+        if request_params:
+            return self._merge_request_params(self.default_request_params, request_params)
+
+        return self.default_request_params.model_copy()
+
+    @classmethod
+    def convert_message_to_message_param(
+        cls, message: MessageT, **kwargs: dict[str, Any]
+    ) -> MessageParamT:
+        """Convert a response object to an input parameter object to allow LLM calls to be chained."""
+        # Many LLM implementations will allow the same type for input and output messages
+        return cast("MessageParamT", message)
+
+    def _finalize_turn_usage(self, turn_usage: "TurnUsage") -> None:
+        """Set tool call count on TurnUsage and add to accumulator."""
+        self._usage_accumulator.add_turn(turn_usage)
+
+    def _log_chat_progress(self, chat_turn: int | None = None, model: str | None = None) -> None:
+        """Log a chat progress event"""
+        # Determine action type based on verb
+        if hasattr(self, "verb") and self.verb:
+            # Use verb directly regardless of type
+            act = self.verb
+        else:
+            act = ProgressAction.SENDING
+
+        data = {
+            "progress_action": act,
+            "model": model,
+            "agent_name": self.name,
+            "chat_turn": chat_turn if chat_turn is not None else None,
+        }
+        self.logger.debug("Chat in progress", data=data)
+
+    def _update_streaming_progress(self, content: str, model: str, estimated_tokens: int) -> int:
+        """Update streaming progress with token estimation and formatting.
+
+        Args:
+            content: The text content from the streaming event
+            model: The model name
+            estimated_tokens: Current token count to update
+
+        Returns:
+            Updated estimated token count
+        """
+        # Rough estimate: 1 token per 4 characters (OpenAI's typical ratio)
+        text_length = len(content)
+        additional_tokens = max(1, text_length // 4)
+        new_total = estimated_tokens + additional_tokens
+
+        # Format token count for display
+        token_str = str(new_total).rjust(5)
+
+        # Emit progress event
+        data = {
+            "progress_action": ProgressAction.STREAMING,
+            "model": model,
+            "agent_name": self.name,
+            "chat_turn": self.chat_turn(),
+            "details": token_str.strip(),  # Token count goes in details for STREAMING action
+        }
+        self.logger.info("Streaming progress", data=data)
+
+        return new_total
+
+    def _emit_stream_text_delta(
+        self,
+        *,
+        text: str,
+        model: str,
+        estimated_tokens: int,
+    ) -> int:
+        """Emit a plain assistant text delta to listeners and progress tracking."""
+        if not text:
+            return estimated_tokens
+
+        self._notify_stream_listeners(StreamChunk(text=text, is_reasoning=False))
+        new_total = self._update_streaming_progress(text, model, estimated_tokens)
+        self._notify_tool_stream_listeners("text", {"chunk": text})
+        return new_total
+
+    def add_stream_listener(self, listener: Callable[[StreamChunk], None]) -> Callable[[], None]:
+        """
+        Register a callback invoked with streaming text chunks.
+
+        Args:
+            listener: Callable receiving a StreamChunk emitted by the provider.
+
+        Returns:
+            A function that removes the listener when called.
+        """
+        self._stream_listeners.add(listener)
+
+        def remove() -> None:
+            self._stream_listeners.discard(listener)
+
+        return remove
+
+    def _notify_stream_listeners(self, chunk: StreamChunk) -> None:
+        """Notify registered listeners with a streaming chunk."""
+        if not chunk.text:
+            return
+        for listener in list(self._stream_listeners):
+            try:
+                listener(chunk)
+            except Exception:
+                self.logger.exception("Stream listener raised an exception")
+
+    def add_tool_stream_listener(
+        self, listener: Callable[[str, dict[str, Any] | None], None]
+    ) -> Callable[[], None]:
+        """Register a callback invoked with tool streaming events.
+
+        Args:
+            listener: Callable receiving event_type (str) and optional info dict.
+
+        Returns:
+            A function that removes the listener when called.
+        """
+
+        self._tool_stream_listeners.add(listener)
+
+        def remove() -> None:
+            self._tool_stream_listeners.discard(listener)
+
+        return remove
+
+    def _notify_tool_stream_listeners(
+        self, event_type: str, payload: dict[str, Any] | None = None
+    ) -> None:
+        """Notify listeners about tool streaming lifecycle events."""
+
+        data = payload or {}
+        for listener in list(self._tool_stream_listeners):
+            try:
+                listener(event_type, data)
+            except Exception:
+                self.logger.exception("Tool stream listener raised an exception")
+
+    def _log_chat_finished(self, model: str | None = None) -> None:
+        """Log a chat finished event"""
+        data = {
+            "progress_action": ProgressAction.READY,
+            "model": model,
+            "agent_name": self.name,
+        }
+        self.logger.debug("Chat finished", data=data)
+
+    def _convert_prompt_messages(self, prompt_messages: list[PromptMessage]) -> list[MessageParamT]:
+        """
+        Convert prompt messages to this LLM's specific message format.
+        To be implemented by concrete LLM classes.
+        """
+        raise NotImplementedError("Must be implemented by subclass")
+
+    def _convert_to_provider_format(
+        self, messages: list[PromptMessageExtended]
+    ) -> list[MessageParamT]:
+        """
+        Convert provided messages to provider-specific format.
+        Called fresh on EVERY API call - no caching.
+
+        Args:
+            messages: List of PromptMessageExtended
+
+        Returns:
+            List of provider-specific message objects
+        """
+        return self._convert_extended_messages_to_provider(messages)
+
+    @abstractmethod
+    def _convert_extended_messages_to_provider(
+        self, messages: list[PromptMessageExtended]
+    ) -> list[MessageParamT]:
+        """
+        Convert PromptMessageExtended list to provider-specific format.
+        Must be implemented by each provider.
+
+        Args:
+            messages: List of PromptMessageExtended objects
+
+        Returns:
+            List of provider-specific message parameter objects
+        """
+        raise NotImplementedError("Must be implemented by subclass")
+
+    async def show_prompt_loaded(
+        self,
+        prompt_name: str,
+        description: str | None = None,
+        message_count: int = 0,
+        arguments: dict[str, str] | None = None,
+    ) -> None:
+        """
+        Display information about a loaded prompt template.
+
+        Args:
+            prompt_name: The name of the prompt
+            description: Optional description of the prompt
+            message_count: Number of messages in the prompt
+            arguments: Optional dictionary of arguments passed to the prompt
+        """
+        await self.display.show_prompt_loaded(
+            prompt_name=prompt_name,
+            description=description,
+            message_count=message_count,
+            agent_name=self.name,
+            arguments=arguments,
+        )
+
+    async def apply_prompt_template(self, prompt_result: GetPromptResult, prompt_name: str) -> str:
+        """
+        Apply a prompt template by adding it to the conversation history.
+        If the last message in the prompt is from a user, automatically
+        generate an assistant response.
+
+        Args:
+            prompt_result: The GetPromptResult containing prompt messages
+            prompt_name: The name of the prompt being applied
+
+        Returns:
+            String representation of the assistant's response if generated,
+            or the last assistant message in the prompt
+        """
+        from fast_agent.mcp.prompt_metadata import prompt_arguments
+        from fast_agent.types import PromptMessageExtended
+
+        # Check if we have any messages
+        if not prompt_result.messages:
+            return "Prompt contains no messages"
+
+        arguments = prompt_arguments(prompt_result)
+
+        # Display information about the loaded prompt
+        await self.show_prompt_loaded(
+            prompt_name=prompt_name,
+            description=prompt_result.description,
+            message_count=len(prompt_result.messages),
+            arguments=arguments,
+        )
+
+        # Convert to PromptMessageExtended objects and delegate
+        multipart_messages = PromptMessageExtended.parse_get_prompt_result(prompt_result)
+        result = await self._apply_prompt_provider_specific(
+            multipart_messages, None, is_template=True
+        )
+        return result.first_text()
+
+    async def _save_history(self, filename: str, messages: list[PromptMessageExtended]) -> None:
+        """
+        Save the Message History to a file in a format determined by the file extension.
+
+        Uses JSON format for .json files (MCP SDK compatible format) and
+        delimited text format for other extensions.
+        """
+        from fast_agent.mcp.prompt_serialization import save_messages
+
+        # Drop control messages like ***SAVE_HISTORY before persisting
+        filtered = [
+            msg.model_copy(deep=True)
+            for msg in messages
+            if not msg.first_text().startswith(CONTROL_MESSAGE_SAVE_HISTORY)
+        ]
+
+        # Save messages using the unified save function that auto-detects format
+        save_messages(filtered, filename)
+
+    @property
+    def message_history(self) -> list[PromptMessageExtended]:
+        """
+        Return the agent's message history as PromptMessageExtended objects.
+
+        This history can be used to transfer state between agents or for
+        analysis and debugging purposes.
+
+        Returns:
+            List of PromptMessageExtended objects representing the conversation history
+        """
+        return []
+
+    def pop_last_message(self) -> PromptMessageExtended | None:
+        """Remove and return the most recent message from the conversation history."""
+        return None
+
+    def clear(self, *, clear_prompts: bool = False) -> None:
+        """Reset stored message history while optionally retaining prompt templates."""
+
+        self.history.clear(clear_prompts=clear_prompts)
+        self._usage_accumulator.reset()
+
+    def _api_key(self):
+        if self._init_api_key is not None:
+            return self._init_api_key
+
+        return self._provider_api_key()
+
+    def _provider_api_key(self):
+        from fast_agent.llm.provider_key_manager import ProviderKeyManager
+
+        assert self.provider
+        return ProviderKeyManager.get_api_key(self.provider.config_name, self.context.config)
+
+    def _base_url(self) -> str | None:
+        if self._init_base_url is not None:
+            return self._init_base_url
+
+        return self._provider_base_url()
+
+    def _provider_base_url(self) -> str | None:
+        return None
+
+    def _default_headers(self) -> dict[str, str] | None:
+        if self._init_default_headers is not None:
+            return dict(self._init_default_headers)
+
+        return self._provider_default_headers()
+
+    def _provider_default_headers(self) -> dict[str, str] | None:
+        return None
+
+    @property
+    def usage_accumulator(self):
+        return self._usage_accumulator
+
+    @usage_accumulator.setter
+    def usage_accumulator(self, value):
+        self._usage_accumulator = value
+
+    def get_usage_summary(self) -> dict:
+        """
+        Get a summary of usage statistics for this LLM instance.
+
+        Returns:
+            Dictionary containing usage statistics including tokens, cache metrics,
+            and context window utilization.
+        """
+        return self._usage_accumulator.get_summary()
+
+    @property
+    def provider(self) -> Provider:
+        """
+        Return the LLM provider type.
+
+        Returns:
+            The Provider enum value representing the LLM provider
+        """
+        return self._provider
+
+    @property
+    def provider_managed_mcp_state(self) -> ProviderManagedMCPState:
+        return self._provider_managed_mcp_state
+
+    def set_provider_managed_mcp_state(self, state: ProviderManagedMCPState) -> None:
+        self._provider_managed_mcp_state = state
+
+    @property
+    def model_name(self) -> str | None:
+        """Return the effective model name, if set."""
+        return self._resolved_model_spec.wire_model_name or self._model_name
+
+    @property
+    def resolved_model(self) -> "ResolvedModelSpec":
+        return self._resolved_model_spec
+
+    @property
+    def model_info(self):
+        """Return resolved model information with capabilities.
+
+        Uses a lightweight resolver backed by the ModelDatabase and provides
+        text/document/vision flags, context window, etc.
+        Applies context_window_override when set (e.g., Anthropic 1M beta).
+        """
+        return self._resolved_model_spec.build_model_info(
+            context_window_override=self._context_window_override
+        )

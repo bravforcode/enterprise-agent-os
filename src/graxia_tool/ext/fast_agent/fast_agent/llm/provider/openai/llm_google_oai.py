@@ -1,0 +1,34 @@
+from fast_agent.constants import DEFAULT_MAX_ITERATIONS
+from fast_agent.llm.provider.openai.llm_openai import OpenAILLM
+from fast_agent.llm.provider_types import Provider
+from fast_agent.types import RequestParams
+
+GOOGLE_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai"
+DEFAULT_GOOGLE_MODEL = "gemini3"
+
+
+class GoogleOaiLLM(OpenAILLM):
+    config_section = "google"
+
+    def __init__(self, **kwargs) -> None:
+        kwargs.pop("provider", None)
+        super().__init__(provider=Provider.GOOGLE_OAI, **kwargs)
+
+    def _initialize_default_params(self, kwargs: dict) -> RequestParams:
+        """Initialize Google OpenAI Compatibility default parameters"""
+        chosen_model = self._resolve_default_model_name(kwargs.get("model"), DEFAULT_GOOGLE_MODEL)
+
+        return RequestParams(
+            model=chosen_model,
+            systemPrompt=self.instruction,
+            parallel_tool_calls=False,
+            max_iterations=DEFAULT_MAX_ITERATIONS,
+            use_history=True,
+        )
+
+    def _provider_base_url(self) -> str:
+        base_url = None
+        if self.context.config and self.context.config.google:
+            base_url = self.context.config.google.base_url
+
+        return base_url if base_url else GOOGLE_BASE_URL

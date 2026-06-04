@@ -1,0 +1,218 @@
+"""
+URL parsing utility for the fast-agent CLI.
+Provides functions to parse URLs and determine MCP server configurations.
+"""
+
+import hashlib
+import re
+from typing import Literal
+from urllib.parse import urlparse
+
+from fast_agent.mcp.hf_auth import TokenProvider, add_hf_auth_header
+
+
+def _normalize_auth_token(auth_token: str) -> str:
+    """Normalize ``--auth`` values into the raw token string.
+
+    ``parse_server_urls`` always emits ``Authorization: Bearer <token>``.
+    Accept optional ``Bearer `` input here to avoid generating duplicated
+    prefixes like ``Bearer Bearer <token>``.
+    """
+
+    normalized = auth_token.strip()
+    if normalized.lower().startswith("bearer "):
+        normalized = normalized[7:].strip()
+    if not normalized:
+        raise ValueError("Auth token cannot be empty")
+    return normalized
+
+
+def parse_server_url(
+    url: str,
+) -> tuple[str, Literal["http", "sse"], str]:
+    """
+    Parse a server URL and determine the transport type and server name.
+
+    Args:
+        url: The URL to parse
+
+    Returns:
+        Tuple containing:
+        - server_name: A generated name for the server
+        - transport_type: Either "http" or "sse" based on URL
+        - url: The parsed and validated URL
+
+    Raises:
+        ValueError: If the URL is invalid or unsupported
+    """
+    # Basic URL validation
+    if not url:
+        raise ValueError("URL cannot be empty")
+
+    # Parse the URL
+    parsed_url = urlparse(url)
+
+    # Ensure scheme is present and is either http or https
+    if not parsed_url.scheme or parsed_url.scheme not in ("http", "https"):
+        raise ValueError(f"URL must have http or https scheme: {url}")
+
+    # Ensure netloc (hostname) is present
+    if not parsed_url.netloc:
+        raise ValueError(f"URL must include a hostname: {url}")
+
+    # Determine transport type based on URL path
+    transport_type: Literal["http", "sse"] = "http"
+    path = parsed_url.path or ""
+    normalized_path = path.rstrip("/")
+    if normalized_path.endswith("/sse"):
+        transport_type = "sse"
+
+    parsed_url_text = url
+    if (
+        transport_type == "http"
+        and not parsed_url.query
+        and not normalized_path.endswith("/mcp")
+    ):
+        fallback_path = "/mcp" if not normalized_path else f"{normalized_path}/mcp"
+        parsed_url_text = parsed_url._replace(path=fallback_path).geturl()
+
+    # Generate a server name based on hostname and port
+    server_name = generate_server_name(parsed_url_text)
+
+    return server_name, transport_type, parsed_url_text
+
+
+def generate_server_name(url: str) -> str:
+    """
+    Generate a unique and readable server name from a URL.
+
+    Args:
+        url: The URL to generate a name for
+
+    Returns:
+        A server name string
+    """
+    parsed_url = urlparse(url)
+
+    # Extract hostname and port
+    hostname, _, port_str = parsed_url.netloc.partition(":")
+
+    # Clean the hostname for use in a server name
+    # Replace non-alphanumeric characters with underscores
+    clean_hostname = re.sub(r"[^a-zA-Z0-9]", "_", hostname)
+
+    if len(clean_hostname) > 15:
+        clean_hostname = clean_hostname[:9] + clean_hostname[-5:]
+
+    # If it's localhost or an IP, add a more unique identifier
+    if clean_hostname in ("localhost", "127_0_0_1") or re.match(r"^(\d+_){3}\d+$", clean_hostname):
+        # Use the path as part of the name for uniqueness
+        path = parsed_url.path.strip("/")
+        path = re.sub(r"[^a-zA-Z0-9]", "_", path)
+
+        # Include port if specified
+        port = f"_{port_str}" if port_str else ""
+
+        if path:
+            return f"{clean_hostname}{port}_{path[:20]}"  # Limit path length
+        else:
+            # Use a hash if no path for uniqueness
+            url_hash = hashlib.md5(url.encode()).hexdigest()[:8]
+            return f"{clean_hostname}{port}_{url_hash}"
+
+    return clean_hostname
+
+
+def parse_server_urls(
+    urls_param: str,
+    auth_token: str | None = None,
+    hub_token_provider: TokenProvider | None = None,
+) -> list[tuple[str, Literal["http", "sse"], str, dict[str, str] | None]]:
+    """
+    Parse a comma-separated list of URLs into server configurations.
+
+    Args:
+        urls_param: Comma-separated list of URLs
+        auth_token: Optional authorization token value (``Bearer `` prefix optional)
+        hub_token_provider: Optional callable that returns a HuggingFace token.
+            Defaults to using huggingface_hub.get_token(). Pass a custom provider
+            for testing.
+
+    Returns:
+        List of tuples containing (server_name, transport_type, url, headers)
+
+    Raises:
+        ValueError: If any URL is invalid
+    """
+    if not urls_param:
+        return []
+
+    # Split by comma and strip whitespace
+    url_list = [url.strip() for url in urls_param.split(",")]
+
+    # Prepare headers if auth token is provided
+    headers = None
+    if auth_token:
+        normalized_token = _normalize_auth_token(auth_token)
+        headers = {"Authorization": f"Bearer {normalized_token}"}
+
+    # Parse each URL
+    result = []
+    for url in url_list:
+        server_name, transport_type, parsed_url = parse_server_url(url)
+
+        # Apply HuggingFace authentication if appropriate
+        final_headers = add_hf_auth_header(parsed_url, headers, hub_token_provider)
+
+        result.append((server_name, transport_type, parsed_url, final_headers))
+
+    return result
+
+
+def generate_server_configs(
+    parsed_urls: list[tuple[str, Literal["http", "sse"], str, dict[str, str] | None]],
+) -> dict[str, dict[str, str | dict[str, str]]]:
+    """
+    Generate server configurations from parsed URLs.
+
+    Args:
+        parsed_urls: List of tuples containing (server_name, transport_type, url, headers)
+
+    Returns:
+        Dictionary of server configurations
+    """
+    server_configs: dict[str, dict[str, str | dict[str, str]]] = {}
+    # Keep track of server name occurrences to handle collisions
+    name_counts = {}
+
+    for server_name, transport_type, url, headers in parsed_urls:
+        # Handle name collisions by adding a suffix
+        final_name = server_name
+        if server_name in server_configs:
+            # Initialize counter if we haven't seen this name yet
+            if server_name not in name_counts:
+                name_counts[server_name] = 1
+
+            # Generate a new name with suffix
+            suffix = name_counts[server_name]
+            final_name = f"{server_name}_{suffix}"
+            name_counts[server_name] += 1
+
+            # Ensure the new name is also unique
+            while final_name in server_configs:
+                suffix = name_counts[server_name]
+                final_name = f"{server_name}_{suffix}"
+                name_counts[server_name] += 1
+
+        config: dict[str, str | dict[str, str]] = {
+            "transport": transport_type,
+            "url": url,
+        }
+
+        # Add headers if provided
+        if headers:
+            config["headers"] = headers
+
+        server_configs[final_name] = config
+
+    return server_configs

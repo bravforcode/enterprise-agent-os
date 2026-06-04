@@ -1,0 +1,27 @@
+from fast_agent.llm.provider.openai.llm_groq import GroqLLM
+from fast_agent.llm.provider.openai.llm_openai import OpenAILLM
+from fast_agent.llm.provider_types import Provider
+from fast_agent.types import RequestParams
+
+ALIYUN_BASE_URL = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+DEFAULT_QWEN_MODEL = "qwen-turbo"
+
+
+class AliyunLLM(GroqLLM):
+    def __init__(self, **kwargs) -> None:
+        kwargs.pop("provider", None)
+        OpenAILLM.__init__(self, provider=Provider.ALIYUN, **kwargs)
+
+    def _initialize_default_params(self, kwargs: dict) -> RequestParams:
+        """Initialize Aliyun-specific default parameters"""
+        base_params = self._initialize_default_params_with_model_fallback(kwargs, DEFAULT_QWEN_MODEL)
+        base_params.parallel_tool_calls = True
+
+        return base_params
+
+    def _provider_base_url(self) -> str:
+        base_url = None
+        if self.context.config and self.context.config.aliyun:
+            base_url = self.context.config.aliyun.base_url
+
+        return base_url if base_url else ALIYUN_BASE_URL
