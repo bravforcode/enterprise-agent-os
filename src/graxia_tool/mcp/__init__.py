@@ -996,8 +996,18 @@ class MCPServer:
         Uses a thread-based stdin reader to avoid the Windows asyncio
         ProactorEventLoop + connect_read_pipe(sys.stdin) bug.
         """
+        import threading
+
         logger.info("MCP server starting on stdio")
         loop = asyncio.get_event_loop()
+        write_lock = threading.Lock()
+
+        def _write_response(response: Dict[str, Any]) -> None:
+            """Thread-safe write to stdout."""
+            data = json.dumps(response) + "\n"
+            with write_lock:
+                sys.stdout.write(data)
+                sys.stdout.flush()
 
         def blocking_reader() -> None:
             """Read line-by-line from stdin, dispatch async, write to stdout."""
@@ -1009,22 +1019,21 @@ class MCPServer:
                     try:
                         req = json.loads(line)
                     except json.JSONDecodeError as e:
-                        sys.stdout.write(
-                            json.dumps(make_error(None, -32700, f"Parse error: {e}")) + "\n"
-                        )
-                        sys.stdout.flush()
+                        _write_response(make_error(None, -32700, f"Parse error: {e}"))
                         continue
                     future = asyncio.run_coroutine_threadsafe(
                         self.handle_request(req), loop
                     )
                     try:
-                        response = future.result()
+                        response = future.result(timeout=60)
+                    except TimeoutError:
+                        logger.warning("Request timed out: %s", req.get("method"))
+                        response = make_error(req.get("id"), -32603, "Request timed out")
                     except Exception as e:
                         logger.exception("handle_request failed in stdio thread")
                         response = make_error(req.get("id"), -32603, f"Internal error: {e}")
                     if response is not None:
-                        sys.stdout.write(json.dumps(response) + "\n")
-                        sys.stdout.flush()
+                        _write_response(response)
             except (EOFError, KeyboardInterrupt):
                 pass
             except Exception:
