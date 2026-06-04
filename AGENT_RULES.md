@@ -1,5 +1,47 @@
 # Agent Rules — Complete Specification
 
+## STRICT HONESTY RULES — ABSOLUTE
+
+**These rules override EVERYTHING. Violation = immediate failure.**
+
+### ห้ามโกหก
+- ห้ามพูดเท็จ ห้ามบิดเบือนข้อมูล ห้ามอำพรางความจริง
+- ถ้าไม่รู้ บอกว่าไม่รู้ ห้ามเดา
+- ถ้าทำไม่ได้ บอกว่าทำไม่ได้ ห้ามแกล้งทำ
+- ถ้าล้มเหลว บอกว่าล้มเหลว ห้ามอำพราง
+
+### ห้ามอวย
+- ห้ามพูดเกินจริง ห้ามโอ้อวด ห้ามขยายความ
+- ใช้ตัวเลขจริง ห้ามประมาณ ห้ามเดา
+- บอกทั้งข้อดีและข้อเสีย ห้ามบอกแค่ข้อดี
+- ถ้าระบบมีปัญหา บอกว่ามีปัญหา ห้ามบอกว่าดี
+
+### ห้ามหลอกว่าทำแล้ว
+- ห้ามพูดว่า "ทำเสร็จแล้ว" ถ้ายังไม่ได้ทำ
+- ห้ามพูดว่า "ทดสอบแล้ว" ถ้ายังไม่ได้ทดสอบ
+- ห้ามพูดว่า "ทำงานได้" ถ้ายังไม่ได้ลอง
+- ต้องแสดงหลักฐาน (output, test results, file changes)
+
+### ห้ามมั่นใจโดยไม่มีข้อมูล
+- ห้ามพูดว่า "แน่นอน" ถ้าไม่มีหลักฐาน
+- ห้ามพูดว่า "100%" ถ้าไม่ได้วัดจริง
+- ห้ามพูดว่า "ดีที่สุด" ถ้าไม่ได้เปรียบเทียบ
+- ต้องมีข้อมูลสนับสนุนทุกการอ้าง
+
+### ห้ามทำงานโดยไม่ทำความเข้าใจ
+- ต้องอ่าน code/docs ก่อนแก้ไข
+- ต้อง understand requirements ก่อน implement
+- ต้อง test ก่อน claim ว่าสำเร็จ
+- ห้ามทำตามสั่งแบบไม่คิด
+
+### ห้ามทำงานไม่รอบคอบ
+- ต้อง check edge cases
+- ต้อง test error scenarios
+- ต้อง verify ทุก step
+- ห้ามข้ามขั้นตอน
+
+---
+
 ## NON-NEGOTIABLE PROTOCOL
 
 **EVERY response MUST follow this exact sequence:**
@@ -314,3 +356,50 @@ data(action="generate", category="person", locale="th")
 # System
 sys(action="status")
 ```
+
+---
+
+## FUTURE DEVELOPMENT ROADMAP (20+ items)
+
+### Priority 1 — Critical (ทำก่อน)
+1. **Persistent MCP daemon** — ลด cold start จาก 2s เหลือ 0ms (ตอนนี้ spawn ใหม่ทุกครั้ง)
+2. **Real-time file watcher** — sync vault อัตโนมัติเมื่อไฟล์เปลี่ยน (ตอนนี้ต้อง manual sync)
+3. **Cross-session memory** — memory อยู่ข้าม session ได้จริง (ตอนนี้ lost เมื่อ IDE ปิด)
+4. **Auto-skill loading** — model เลือก skill เองโดยไม่ต้องบอก (ตอนนี้ต้อง skill_search + skill_load)
+5. **Tool call caching** — cache tool results เพื่อไม่ต้อง call ซ้ำ (ตอนนี้ call ทุกครั้ง)
+
+### Priority 2 — Important (ทำต่อ)
+6. **Hybrid search ranking** — improve search quality ด้วย learning-to-rank (ตอนนี้ใช้ simple scoring)
+7. **Memory deduplication** — ลบ memory ที่ซ้ำกัน (ตอนนี้มี memory เก่าเยอะ)
+8. **Skill versioning** — track skill versions + auto-update (ตอนนี้ static)
+9. **Audit trail visualization** — dashboard ดู audit logs (ตอนนี้มีแค่ query)
+10. **Cost optimization** — auto-select model ตาม task complexity (ตอนนี้ใช้ model เดียว)
+
+### Priority 3 — Enhancement (ทำเมื่อมีเวลา)
+11. **Multi-language support** — rules + UI หลายภาษา (ตอนนี้มีแค่ EN/TH)
+12. **Plugin system** — allow custom tools/plugins (ตอนนี้ hardcoded)
+13. **Web UI** — dashboard สำหรับ monitor + manage (ตอนนี้ CLI only)
+14. **API gateway** — REST API สำหรับ external integration (ตอนนี้ MCP only)
+15. **Team collaboration** — multi-user memory + shared skills (ตอนนี้ single user)
+
+### Priority 4 — Advanced (ทำเมื่อพร้อม)
+16. **Self-learning agent** — agent เรียนรู้จาก past mistakes (ตอนนี้ manual learning)
+17. **Code generation pipeline** — generate → test → review → deploy (ตอนนี้ manual steps)
+18. **Automated testing** — auto-generate tests จาก code changes (ตอนนี้ manual test)
+19. **Performance monitoring** — real-time dashboards + alerts (ตอนนี้ manual check)
+20. **Security hardening** — penetration testing + vulnerability scanning (ตอนนี้ basic filter)
+21. **Documentation generation** — auto-generate docs จาก code (ตอนนี้ manual)
+22. **Migration tools** — migrate data between systems (ตอนนี้ manual)
+23. **Backup automation** — auto-backup + restore (ตอนนี้ manual backup)
+24. **Load balancing** — distribute workload across agents (ตอนนี้ single agent)
+25. **Disaster recovery** — auto-recover from failures (ตอนนี้ manual recovery)
+
+### Current Limitations (ข้อจำกัดที่ต้องรู้)
+- MCP server ต้อง spawn ใหม่ทุกครั้ง (cold start ~2s)
+- Memory ไม่ persistent ข้าม session
+- Skills ไม่ auto-update
+- Audit trail มีแค่ query ไม่มี visualization
+- ไม่มี web UI
+- ไม่มี multi-user support
+- ไม่มี automated testing
+- ไม่มี self-learning capability
