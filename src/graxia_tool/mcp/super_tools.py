@@ -334,10 +334,15 @@ async def graxia_memory_ext_handler(args: Dict[str, Any]) -> Dict[str, Any]:
         from .qwen_memory_tools import _qwen_status
         return await _qwen_status(args)
 
+    # Hybrid RAG rerank
+    elif action == "hybrid_rerank":
+        from .hybrid_rag import hybrid_rerank_handler
+        return await hybrid_rerank_handler(args)
+
     return _err(f"Unknown action: {action}. Use: learn, list_skills, recall, get_skill, delete_skill, "
                 "vault_sync_task, vault_sync_all, vault_search, vault_pull, vault_list, vault_moc, "
                 "learning_stats, learning_suggest, learning_record, learning_reset, "
-                "summarize, rerank, categorize, compress, merge, qwen_status")
+                "summarize, rerank, categorize, compress, merge, qwen_status, hybrid_rerank")
 
 
 GRAXIA_MEMORY_EXT_SCHEMA = {
@@ -350,6 +355,7 @@ GRAXIA_MEMORY_EXT_SCHEMA = {
                 "vault_sync_task", "vault_sync_all", "vault_search", "vault_pull", "vault_list", "vault_moc",
                 "learning_stats", "learning_suggest", "learning_record", "learning_reset",
                 "summarize", "rerank", "categorize", "compress", "merge", "qwen_status",
+                "hybrid_rerank",
             ],
             "description": "Sub-action to perform.",
         },

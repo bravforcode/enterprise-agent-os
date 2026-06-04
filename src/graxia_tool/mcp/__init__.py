@@ -880,23 +880,8 @@ def build_default_registry() -> ToolRegistry:
         ))
 
     # =========================================================================
-    # 3 additional kept tools
+    # 2 additional kept tools (governance_check moved to governance module)
     # =========================================================================
-
-    reg.register(Tool(
-        name="governance_check",
-        description="Check if an action is allowed by governance policies (safety, cost, quality, compliance).",
-        input_schema={
-            "type": "object",
-            "properties": {
-                "action": {"type": "string"},
-                "context": {"type": "object"},
-            },
-            "required": ["action"],
-        },
-        handler=_governance_check,
-        category="governance",
-    ))
 
     reg.register(Tool(
         name="eval_run",
@@ -920,6 +905,81 @@ def build_default_registry() -> ToolRegistry:
         category="cache",
     ))
 
+    # =========================================================================
+    # Governance tools (content filters + audit trail)
+    # =========================================================================
+
+    from .governance import GOVERNANCE_TOOL_SPECS
+
+    for tool_def in GOVERNANCE_TOOL_SPECS:
+        reg.register(Tool(
+            name=tool_def["name"],
+            description=tool_def["description"],
+            input_schema=tool_def["input_schema"],
+            handler=tool_def["handler"],
+            category=tool_def.get("category", "governance"),
+        ))
+
+    # =========================================================================
+    # Declarative workflow tools
+    # =========================================================================
+
+    from .workflows import WORKFLOW_TOOL_SPECS
+
+    for tool_def in WORKFLOW_TOOL_SPECS:
+        reg.register(Tool(
+            name=tool_def["name"],
+            description=tool_def["description"],
+            input_schema=tool_def["input_schema"],
+            handler=tool_def["handler"],
+            category=tool_def.get("category", "workflow"),
+        ))
+
+    # =========================================================================
+    # Hybrid RAG tools
+    # =========================================================================
+
+    from .hybrid_rag import HYBRID_RAG_TOOLS
+
+    for tool_def in HYBRID_RAG_TOOLS:
+        reg.register(Tool(
+            name=tool_def["name"],
+            description=tool_def["description"],
+            input_schema=tool_def["input_schema"],
+            handler=tool_def["handler"],
+            category=tool_def.get("category", "rag"),
+        ))
+
+    # =========================================================================
+    # Progressive Skill Loader tools (metadata-first)
+    # =========================================================================
+
+    from .skill_loader import SKILL_LOADER_TOOLS
+
+    for tool_def in SKILL_LOADER_TOOLS:
+        reg.register(Tool(
+            name=tool_def["name"],
+            description=tool_def["description"],
+            input_schema=tool_def["input_schema"],
+            handler=tool_def["handler"],
+            category=tool_def.get("category", "skills"),
+        ))
+
+    # =========================================================================
+    # Incremental Sync tools (Merkle tree-based)
+    # =========================================================================
+
+    from .incremental_sync import INCREMENTAL_SYNC_TOOLS
+
+    for tool_def in INCREMENTAL_SYNC_TOOLS:
+        reg.register(Tool(
+            name=tool_def["name"],
+            description=tool_def["description"],
+            input_schema=tool_def["input_schema"],
+            handler=tool_def["handler"],
+            category=tool_def.get("category", "sync"),
+        ))
+
     return reg
 
 
@@ -929,7 +989,7 @@ class MCPServer:
     """Minimal MCP server implementation using stdio or SSE."""
 
     SERVER_NAME = "graxia_tool"
-    SERVER_VERSION = "0.4.0"
+    SERVER_VERSION = "0.5.0"
     PROTOCOL_VERSION = "2024-11-05"
 
     def __init__(self, registry: Optional[ToolRegistry] = None):

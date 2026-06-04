@@ -15,8 +15,8 @@ from graxia_tool.vault.auto_systems import (
     VaultAutoTaskExtractor,
 )
 from graxia_tool.mcp.auto_tools import (
-    vault_auto_link,
-    vault_auto_tag,
+    vault_run_auto_link as vault_auto_link,
+    vault_run_auto_tag as vault_auto_tag,
     vault_auto_classify,
     vault_auto_find_duplicates,
     vault_auto_check_consistency,

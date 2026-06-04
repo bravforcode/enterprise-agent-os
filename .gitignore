@@ -12,3 +12,5 @@ src/graxia_tool/graphify-out/
 *.sqlite3
 alembic/versions/*.pyc
 docker/data/
+.pytest-tmp/
+.external-repos/
