@@ -1027,6 +1027,16 @@ class MCPServer:
             if method == "tools/call":
                 tool_name = params.get("name", "")
                 arguments = params.get("arguments", {}) or {}
+                
+                # Fast path: try cached/static dispatch first (lazy import)
+                try:
+                    from .fast_path import fast_dispatch
+                    cached = fast_dispatch(tool_name, arguments)
+                    if cached is not None:
+                        return make_result(req_id, cached) if not is_notification else None
+                except ImportError:
+                    pass
+                
                 tool = self.registry.get(tool_name)
                 if not tool:
                     return make_error(req_id, -32602, f"Unknown tool: {tool_name}")
