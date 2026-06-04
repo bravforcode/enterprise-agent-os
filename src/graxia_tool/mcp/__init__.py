@@ -920,6 +920,20 @@ def build_default_registry() -> ToolRegistry:
         category="cache",
     ))
 
+    # Qwen memory tools
+    from .qwen_memory_tools import QWEN_MEMORY_TOOLS, QWEN_MEMORY_HANDLERS
+    for tool_def in QWEN_MEMORY_TOOLS:
+        handler_name = tool_def["handler"]
+        handler_fn = QWEN_MEMORY_HANDLERS.get(handler_name)
+        if handler_fn:
+            reg.register(Tool(
+                name=tool_def["name"],
+                description=tool_def["description"],
+                input_schema=tool_def["input_schema"],
+                handler=handler_fn,
+                category="qwen_memory",
+            ))
+
     return reg
 
 
