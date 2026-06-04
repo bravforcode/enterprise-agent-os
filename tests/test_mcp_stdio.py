@@ -85,12 +85,15 @@ def test_mcp_tools_list():
     ], timeout=10.0)
     assert len(responses) == 2
     tools = responses[1]["result"]["tools"]
-    assert len(tools) >= 30, f"Expected >=30 tools, got {len(tools)}"
+    assert len(tools) >= 26, f"Expected >=26 tools, got {len(tools)}"
     tool_names = {t["name"] for t in tools}
     assert "agent_run" in tool_names
     assert "pipeline_run" in tool_names
     assert "system_status" in tool_names
     assert "auto_route" in tool_names
+    assert "graxia_skills" in tool_names
+    assert "graxia_vault" in tool_names
+    assert "graxia_swarm" in tool_names
 
 
 def test_mcp_ping():

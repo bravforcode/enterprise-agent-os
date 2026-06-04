@@ -15,7 +15,7 @@ Quick start:
 """
 from __future__ import annotations
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 # Expose key public API at top level
 from .llm import get_llm_client, OllamaClient, AnthropicClient, OpenAIClient, MockLLMClient

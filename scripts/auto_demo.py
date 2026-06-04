@@ -68,53 +68,44 @@ def main():
     print(f"  Tools registered: {len(tools)}")
 
     tool_names = {t["name"] for t in tools}
-    tracks = {
-        "T1-Acontext": ["acontext_learn", "acontext_list_skills", "acontext_recall",
-                        "acontext_get_skill", "acontext_delete_skill"],
-        "T2-Swarm": ["swarm_init", "swarm_run", "swarm_status",
-                     "federation_init", "federation_send", "federation_list_peers",
-                     "sona_record", "sona_suggest"],
-        "T3-Autonomous": ["context_load", "context_save", "context_update",
-                         "autonomous_plan", "autonomous_run", "autonomous_status",
-                         "autonomous_list_runs"],
-        "T4-Faker": ["faker_generate", "faker_schema", "faker_locales"],
-        "T5-Integration": ["system_status", "agent_list", "agent_run"],
-    }
+    super_tools = [n for n in tool_names if n.startswith("graxia_")]
+    print(f"  Super-tools: {', '.join(sorted(super_tools))}")
 
-    # ── Track T1: Acontext ──
+    # ── Track T1: Acontext (via graxia_memory_ext) ──
     section("T1: Acontext Skill Memory")
     responses = send_mcp([
         {"jsonrpc": "2.0", "id": 1, "method": "initialize",
          "params": {"protocolVersion": "2024-11-05", "capabilities": {},
                     "clientInfo": {"name": "demo", "version": "1.0"}}},
         {"jsonrpc": "2.0", "id": 2, "method": "tools/call",
-         "params": {"name": "acontext_list_skills",
-                    "arguments": {"space": "demo"}}},
+         "params": {"name": "graxia_memory_ext",
+                    "arguments": {"action": "list_skills", "space": "demo"}}},
     ])
     if len(responses) >= 2 and "result" in responses[1]:
-        print("  acontext_list_skills: OK")
+        print("  graxia_memory_ext(action=list_skills): OK")
         results["tracks"]["T1"] = "PASS"
         results["passed"] += 1
     else:
-        print("  acontext_list_skills: FAILED")
+        print("  graxia_memory_ext: FAILED")
         results["tracks"]["T1"] = "FAIL"
         results["failed"] += 1
 
-    # ── Track T2: Swarm ──
+    # ── Track T2: Swarm (via graxia_swarm) ──
     section("T2: Multi-Agent Swarm + SONA")
     responses = send_mcp([
         {"jsonrpc": "2.0", "id": 1, "method": "initialize",
          "params": {"protocolVersion": "2024-11-05", "capabilities": {},
                     "clientInfo": {"name": "demo", "version": "1.0"}}},
         {"jsonrpc": "2.0", "id": 2, "method": "tools/call",
-         "params": {"name": "swarm_status", "arguments": {}}},
+         "params": {"name": "graxia_swarm",
+                    "arguments": {"action": "status"}}},
         {"jsonrpc": "2.0", "id": 3, "method": "tools/call",
-         "params": {"name": "sona_suggest",
-                    "arguments": {"intent": "code review"}}},
+         "params": {"name": "graxia_swarm",
+                    "arguments": {"action": "sona_suggest", "intent": "code review"}}},
     ])
     if len(responses) >= 2 and "result" in responses[1]:
-        print("  swarm_status: OK")
-        print("  sona_suggest: OK")
+        print("  graxia_swarm(action=status): OK")
+        print("  graxia_swarm(action=sona_suggest): OK")
         results["tracks"]["T2"] = "PASS"
         results["passed"] += 1
     else:
@@ -122,17 +113,18 @@ def main():
         results["tracks"]["T2"] = "FAIL"
         results["failed"] += 1
 
-    # ── Track T3: Autonomous ──
+    # ── Track T3: Autonomous (via graxia_autonomous) ──
     section("T3: Autonomous Mode + ANUS.md")
     responses = send_mcp([
         {"jsonrpc": "2.0", "id": 1, "method": "initialize",
          "params": {"protocolVersion": "2024-11-05", "capabilities": {},
                     "clientInfo": {"name": "demo", "version": "1.0"}}},
         {"jsonrpc": "2.0", "id": 2, "method": "tools/call",
-         "params": {"name": "autonomous_list_runs", "arguments": {}}},
+         "params": {"name": "graxia_autonomous",
+                    "arguments": {"action": "list_runs"}}},
     ])
     if len(responses) >= 2 and "result" in responses[1]:
-        print("  autonomous_list_runs: OK")
+        print("  graxia_autonomous(action=list_runs): OK")
         results["tracks"]["T3"] = "PASS"
         results["passed"] += 1
     else:
@@ -140,28 +132,29 @@ def main():
         results["tracks"]["T3"] = "FAIL"
         results["failed"] += 1
 
-    # ── Track T4: Faker ──
+    # ── Track T4: Faker (via graxia_data) ──
     section("T4: Faker Synthetic Data (Thai Locale)")
     responses = send_mcp([
         {"jsonrpc": "2.0", "id": 1, "method": "initialize",
          "params": {"protocolVersion": "2024-11-05", "capabilities": {},
                     "clientInfo": {"name": "demo", "version": "1.0"}}},
         {"jsonrpc": "2.0", "id": 2, "method": "tools/call",
-         "params": {"name": "faker_locales", "arguments": {}}},
+         "params": {"name": "graxia_data",
+                    "arguments": {"action": "locales"}}},
         {"jsonrpc": "2.0", "id": 3, "method": "tools/call",
-         "params": {"name": "faker_generate",
-                    "arguments": {"category": "person", "field": "first_name",
-                                  "locale": "th", "count": 3}}},
+         "params": {"name": "graxia_data",
+                    "arguments": {"action": "generate", "category": "person",
+                                  "field": "first_name", "locale": "th", "count": 3}}},
         {"jsonrpc": "2.0", "id": 4, "method": "tools/call",
-         "params": {"name": "faker_generate",
-                    "arguments": {"category": "person", "field": "phone_number",
-                                  "locale": "th", "count": 3}}},
+         "params": {"name": "graxia_data",
+                    "arguments": {"action": "generate", "category": "person",
+                                  "field": "phone_number", "locale": "th", "count": 3}}},
     ])
     if len(responses) >= 3 and "result" in responses[2]:
-        print("  faker_locales: OK")
-        print("  faker_generate (Thai names): OK")
+        print("  graxia_data(action=locales): OK")
+        print("  graxia_data(action=generate, Thai names): OK")
         if len(responses) >= 4:
-            print("  faker_generate (Thai phones): OK")
+            print("  graxia_data(action=generate, Thai phones): OK")
         results["tracks"]["T4"] = "PASS"
         results["passed"] += 1
     else:

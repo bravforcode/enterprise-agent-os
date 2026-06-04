@@ -612,14 +612,8 @@ class TestRegistryIntegration:
 
         reg = build_default_registry()
         names = {t.name for t in reg.list_all()}
-        for name in {
-            "acontext_learn",
-            "acontext_list_skills",
-            "acontext_recall",
-            "acontext_get_skill",
-            "acontext_delete_skill",
-        }:
-            assert name in names, f"Tool {name} not registered"
+        # After merge: 5 acontext tools → graxia_memory_ext super-tool
+        assert "graxia_memory_ext" in names, "graxia_memory_ext not registered"
 
 
 # ---------------------------------------------------------------------------

@@ -615,10 +615,13 @@ _START_TIME = time.time()
 
 
 def build_default_registry() -> ToolRegistry:
-    """Build the default MCP tool registry exposing Agent OS features."""
+    """Build the default MCP tool registry — 26 tools (15 standalone + 8 super-tools + 3 kept)."""
     reg = ToolRegistry()
 
-    # Agent OS core
+    # =========================================================================
+    # 15 high-frequency standalone tools
+    # =========================================================================
+
     reg.register(Tool(
         name="agent_run",
         description="Run a sub-agent on a query.",
@@ -678,6 +681,28 @@ def build_default_registry() -> ToolRegistry:
     ))
 
     reg.register(Tool(
+        name="system_status",
+        description="Get Agent OS system status, version, and component health.",
+        input_schema={"type": "object", "properties": {}},
+        handler=_system_status,
+        category="system",
+    ))
+
+    reg.register(Tool(
+        name="auto_route",
+        description="Route a prompt to optimal skills/RAG/agent/model/tools.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "prompt": {"type": "string", "description": "The user prompt to route"},
+            },
+            "required": ["prompt"],
+        },
+        handler=_auto_route,
+        category="routing",
+    ))
+
+    reg.register(Tool(
         name="guard_check",
         description="Run input/output guardrail checks.",
         input_schema={
@@ -706,442 +731,6 @@ def build_default_registry() -> ToolRegistry:
         },
         handler=_memory_search,
         category="memory",
-    ))
-
-    reg.register(Tool(
-        name="rag_query",
-        description="Query RAG for relevant documents.",
-        input_schema={
-            "type": "object",
-            "properties": {
-                "query": {"type": "string"},
-                "top_k": {"type": "integer", "default": 5},
-                "collection": {"type": "string", "default": "default"},
-            },
-            "required": ["query"],
-        },
-        handler=_rag_query,
-        category="rag",
-    ))
-
-    # Cache + Cost
-    reg.register(Tool(
-        name="cache_get",
-        description="Get a value from the prompt cache by key.",
-        input_schema={
-            "type": "object",
-            "properties": {"key": {"type": "string"}},
-            "required": ["key"],
-        },
-        handler=_cache_get,
-        category="cache",
-    ))
-
-    reg.register(Tool(
-        name="cache_set",
-        description="Store a value in the prompt cache with TTL.",
-        input_schema={
-            "type": "object",
-            "properties": {
-                "key": {"type": "string"},
-                "value": {"type": "string"},
-                "ttl": {"type": "integer", "default": 3600},
-            },
-            "required": ["key", "value"],
-        },
-        handler=_cache_set,
-        category="cache",
-    ))
-
-    reg.register(Tool(
-        name="cost_report",
-        description="Get cost report from the cost engine: total tokens, cost USD, savings %, cache hit rate.",
-        input_schema={
-            "type": "object",
-            "properties": {
-                "period": {"type": "string", "enum": ["hour", "day", "week", "all"], "default": "all"},
-            },
-        },
-        handler=_cost_report,
-        category="cost",
-    ))
-
-    # Skills
-    reg.register(Tool(
-        name="skills_list",
-        description="List all available skills in the skill registry.",
-        input_schema={"type": "object", "properties": {}},
-        handler=_skills_list,
-        category="skills",
-    ))
-
-    reg.register(Tool(
-        name="skills_load",
-        description="Load a skill's full content by name.",
-        input_schema={
-            "type": "object",
-            "properties": {"skill_name": {"type": "string"}},
-            "required": ["skill_name"],
-        },
-        handler=_skills_load,
-        category="skills",
-    ))
-
-    # Governance
-    reg.register(Tool(
-        name="governance_check",
-        description="Check if an action is allowed by governance policies (safety, cost, quality, compliance).",
-        input_schema={
-            "type": "object",
-            "properties": {
-                "action": {"type": "string"},
-                "context": {"type": "object"},
-            },
-            "required": ["action"],
-        },
-        handler=_governance_check,
-        category="governance",
-    ))
-
-    # Eval
-    reg.register(Tool(
-        name="eval_run",
-        description="Run regression eval on an agent against a golden dataset.",
-        input_schema={
-            "type": "object",
-            "properties": {
-                "dataset_name": {"type": "string", "default": "qa"},
-                "agent_name": {"type": "string", "default": "general"},
-            },
-        },
-        handler=_eval_run,
-        category="eval",
-    ))
-
-    # System
-    reg.register(Tool(
-        name="system_status",
-        description="Get Agent OS system status, version, and component health.",
-        input_schema={"type": "object", "properties": {}},
-        handler=_system_status,
-        category="system",
-    ))
-
-    # Obsidian vault
-    reg.register(Tool(
-        name="vault_search",
-        description="Search the connected Obsidian vault (Second Brain) for notes matching a query.",
-        input_schema={
-            "type": "object",
-            "properties": {
-                "query": {"type": "string"},
-                "limit": {"type": "integer", "default": 10},
-            },
-            "required": ["query"],
-        },
-        handler=_vault_search,
-        category="vault",
-    ))
-
-    reg.register(Tool(
-        name="vault_read",
-        description="Read a specific note from the Obsidian vault by path.",
-        input_schema={
-            "type": "object",
-            "properties": {"path": {"type": "string"}},
-            "required": ["path"],
-        },
-        handler=_vault_read,
-        category="vault",
-    ))
-
-    reg.register(Tool(
-        name="vault_write",
-        description="Write a note to the Obsidian vault (creates directories as needed).",
-        input_schema={
-            "type": "object",
-            "properties": {
-                "path": {"type": "string"},
-                "content": {"type": "string"},
-            },
-            "required": ["path", "content"],
-        },
-        handler=_vault_write,
-        category="vault",
-    ))
-
-    # Vault tools (from vault_tools module)
-    from .vault_tools import (
-        vault_link, vault_tag, vault_moc, vault_tasks,
-        vault_graph, vault_analytics,
-    )
-
-    # Vault auto-system tools (from auto_tools module)
-    from .auto_tools import (
-        vault_run_auto_link, vault_run_auto_tag, vault_auto_classify,
-        vault_auto_find_duplicates, vault_auto_check_consistency,
-        vault_auto_extract_tasks,
-    )
-
-    reg.register(Tool(
-        name="vault_link",
-        description="Create a wiki-link between two notes in the vault. Adds [[target]] to the source note.",
-        input_schema={
-            "type": "object",
-            "properties": {
-                "source": {"type": "string", "description": "Source note path (relative to vault)"},
-                "target": {"type": "string", "description": "Target note path or title"},
-                "link_text": {"type": "string", "description": "Optional display text for the link"},
-            },
-            "required": ["source", "target"],
-        },
-        handler=vault_link,
-        category="vault",
-    ))
-
-    reg.register(Tool(
-        name="vault_tag",
-        description="Add or remove tags from a note's frontmatter.",
-        input_schema={
-            "type": "object",
-            "properties": {
-                "path": {"type": "string", "description": "Note path (relative to vault)"},
-                "tags": {"type": "array", "items": {"type": "string"}, "description": "Tags to add or remove"},
-                "action": {"type": "string", "enum": ["add", "remove"], "default": "add"},
-            },
-            "required": ["path", "tags"],
-        },
-        handler=vault_tag,
-        category="vault",
-    ))
-
-    reg.register(Tool(
-        name="vault_moc",
-        description="Generate a Map of Content (MOC) note for a topic by scanning the vault for related notes.",
-        input_schema={
-            "type": "object",
-            "properties": {
-                "topic": {"type": "string", "description": "Topic name for the MOC"},
-                "folder": {"type": "string", "default": "MOC", "description": "Folder to save the MOC in"},
-            },
-            "required": ["topic"],
-        },
-        handler=vault_moc,
-        category="vault",
-    ))
-
-    reg.register(Tool(
-        name="vault_tasks",
-        description="Extract all TODO/task items from vault notes (checks - [ ], TODO:, ACTION: patterns).",
-        input_schema={
-            "type": "object",
-            "properties": {
-                "folder": {"type": "string", "description": "Optional folder to scan (default: whole vault)"},
-            },
-        },
-        handler=vault_tasks,
-        category="vault",
-    ))
-
-    reg.register(Tool(
-        name="vault_graph",
-        description="Get a note's relationship graph: outgoing links, backlinks, and related notes by shared tags.",
-        input_schema={
-            "type": "object",
-            "properties": {
-                "path": {"type": "string", "description": "Note path (relative to vault)"},
-            },
-            "required": ["path"],
-        },
-        handler=vault_graph,
-        category="vault",
-    ))
-
-    reg.register(Tool(
-        name="vault_analytics",
-        description="Get vault-wide statistics: note count, links, orphans, tags, folder distribution.",
-        input_schema={"type": "object", "properties": {}},
-        handler=vault_analytics,
-        category="vault",
-    ))
-
-    reg.register(Tool(
-        name="vault_auto_link",
-        description="Auto-link orphaned notes by title-word overlap.",
-        input_schema={
-            "type": "object",
-            "properties": {
-                "dry_run": {"type": "boolean", "default": False},
-                "max_files": {"type": "integer", "default": 50},
-            },
-        },
-        handler=vault_run_auto_link,
-        category="vault",
-    ))
-
-    reg.register(Tool(
-        name="vault_auto_tag",
-        description="Auto-tag notes by content analysis.",
-        input_schema={
-            "type": "object",
-            "properties": {
-                "dry_run": {"type": "boolean", "default": False},
-                "max_files": {"type": "integer", "default": 200},
-            },
-        },
-        handler=vault_run_auto_tag,
-        category="vault",
-    ))
-
-    reg.register(Tool(
-        name="vault_auto_classify",
-        description="Classify notes into PARA structure.",
-        input_schema={
-            "type": "object",
-            "properties": {
-                "dry_run": {"type": "boolean", "default": False},
-                "max_files": {"type": "integer", "default": 100},
-            },
-        },
-        handler=vault_auto_classify,
-        category="vault",
-    ))
-
-    reg.register(Tool(
-        name="vault_auto_find_duplicates",
-        description="Find duplicate files and similar notes.",
-        input_schema={
-            "type": "object",
-            "properties": {
-                "dry_run": {"type": "boolean", "default": False},
-            },
-        },
-        handler=vault_auto_find_duplicates,
-        category="vault",
-    ))
-
-    reg.register(Tool(
-        name="vault_auto_check_consistency",
-        description="Check vault integrity: broken links, empty files.",
-        input_schema={
-            "type": "object",
-            "properties": {
-                "dry_run": {"type": "boolean", "default": False},
-            },
-        },
-        handler=vault_auto_check_consistency,
-        category="vault",
-    ))
-
-    reg.register(Tool(
-        name="vault_auto_extract_tasks",
-        description="Extract TODOs, FIXMEs, and action items.",
-        input_schema={
-            "type": "object",
-            "properties": {
-                "dry_run": {"type": "boolean", "default": False},
-            },
-        },
-        handler=vault_auto_extract_tasks,
-        category="vault",
-    ))
-
-    # Token optimization tools
-    from .token_tools import (
-        token_optimize, token_report, token_thai,
-    )
-
-    reg.register(Tool(
-        name="token_optimize",
-        description="Optimize text for token savings (RTK/lean-ctx/TTO).",
-        input_schema={
-            "type": "object",
-            "properties": {
-                "text": {"type": "string", "description": "Command or text to optimize"},
-                "context": {
-                    "type": "string",
-                    "enum": ["command", "file_read", "thai", "general"],
-                    "default": "general",
-                    "description": "Optimization context: command (RTK prefix), file_read (lean-ctx), thai (TTO), general (auto-detect)",
-                },
-            },
-            "required": ["text"],
-        },
-        handler=token_optimize,
-        category="optimization",
-    ))
-
-    reg.register(Tool(
-        name="token_report",
-        description="Get token savings statistics.",
-        input_schema={"type": "object", "properties": {}},
-        handler=token_report,
-        category="optimization",
-    ))
-
-    reg.register(Tool(
-        name="token_thai",
-        description="Optimize Thai text for token savings.",
-        input_schema={
-            "type": "object",
-            "properties": {
-                "text": {"type": "string", "description": "Thai text to optimize"},
-            },
-            "required": ["text"],
-        },
-        handler=token_thai,
-        category="optimization",
-    ))
-
-    # Vault-memory sync tools
-    from .memory_tools import MEMORY_VAULT_TOOLS, memory_vault_sync_task
-
-    for tool_def in MEMORY_VAULT_TOOLS:
-        reg.register(Tool(
-            name=tool_def["name"],
-            description=tool_def["description"],
-            input_schema=tool_def["input_schema"],
-            handler=tool_def["handler"],
-            category=tool_def.get("category", "memory"),
-        ))
-
-    # Self-learning tools
-    from .learning_tools import LEARNING_TOOLS
-
-    for tool_def in LEARNING_TOOLS:
-        reg.register(Tool(
-            name=tool_def["name"],
-            description=tool_def["description"],
-            input_schema=tool_def["input_schema"],
-            handler=tool_def["handler"],
-            category=tool_def.get("category", "learning"),
-        ))
-
-    # Faker / synthetic data tools
-    from .faker_tools import FAKER_TOOLS
-
-    for tool_def in FAKER_TOOLS:
-        reg.register(Tool(
-            name=tool_def["name"],
-            description=tool_def["description"],
-            input_schema=tool_def["input_schema"],
-            handler=tool_def["handler"],
-            category=tool_def.get("category", "faker"),
-        ))
-
-    # Auto-router, memory, cache tools
-    reg.register(Tool(
-        name="auto_route",
-        description="Route a prompt to optimal skills/RAG/agent/model/tools.",
-        input_schema={
-            "type": "object",
-            "properties": {
-                "prompt": {"type": "string", "description": "The user prompt to route"},
-            },
-            "required": ["prompt"],
-        },
-        handler=_auto_route,
-        category="routing",
     ))
 
     reg.register(Tool(
@@ -1186,6 +775,63 @@ def build_default_registry() -> ToolRegistry:
     ))
 
     reg.register(Tool(
+        name="rag_query",
+        description="Query RAG for relevant documents.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "query": {"type": "string"},
+                "top_k": {"type": "integer", "default": 5},
+                "collection": {"type": "string", "default": "default"},
+            },
+            "required": ["query"],
+        },
+        handler=_rag_query,
+        category="rag",
+    ))
+
+    reg.register(Tool(
+        name="cache_get",
+        description="Get a value from the prompt cache by key.",
+        input_schema={
+            "type": "object",
+            "properties": {"key": {"type": "string"}},
+            "required": ["key"],
+        },
+        handler=_cache_get,
+        category="cache",
+    ))
+
+    reg.register(Tool(
+        name="cache_set",
+        description="Store a value in the prompt cache with TTL.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "key": {"type": "string"},
+                "value": {"type": "string"},
+                "ttl": {"type": "integer", "default": 3600},
+            },
+            "required": ["key", "value"],
+        },
+        handler=_cache_set,
+        category="cache",
+    ))
+
+    reg.register(Tool(
+        name="cost_report",
+        description="Get cost report from the cost engine: total tokens, cost USD, savings %, cache hit rate.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "period": {"type": "string", "enum": ["hour", "day", "week", "all"], "default": "all"},
+            },
+        },
+        handler=_cost_report,
+        category="cost",
+    ))
+
+    reg.register(Tool(
         name="context_cache_get",
         description="Get cached routing decision for a prompt.",
         input_schema={
@@ -1199,6 +845,54 @@ def build_default_registry() -> ToolRegistry:
         category="cache",
     ))
 
+    # =========================================================================
+    # 8 merged super-tools (replace 46 individual tools)
+    # =========================================================================
+
+    from .super_tools import SUPER_TOOLS
+
+    for tool_def in SUPER_TOOLS:
+        reg.register(Tool(
+            name=tool_def["name"],
+            description=tool_def["description"],
+            input_schema=tool_def["input_schema"],
+            handler=tool_def["handler"],
+            category=tool_def.get("category", "general"),
+        ))
+
+    # =========================================================================
+    # 3 additional kept tools
+    # =========================================================================
+
+    reg.register(Tool(
+        name="governance_check",
+        description="Check if an action is allowed by governance policies (safety, cost, quality, compliance).",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "action": {"type": "string"},
+                "context": {"type": "object"},
+            },
+            "required": ["action"],
+        },
+        handler=_governance_check,
+        category="governance",
+    ))
+
+    reg.register(Tool(
+        name="eval_run",
+        description="Run regression eval on an agent against a golden dataset.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "dataset_name": {"type": "string", "default": "qa"},
+                "agent_name": {"type": "string", "default": "general"},
+            },
+        },
+        handler=_eval_run,
+        category="eval",
+    ))
+
     reg.register(Tool(
         name="context_cache_stats",
         description="Context cache hit rate and entry counts.",
@@ -1206,42 +900,6 @@ def build_default_registry() -> ToolRegistry:
         handler=_context_cache_stats,
         category="cache",
     ))
-
-    # Track T2 — Swarm + Federation + SONA-lite tools
-    from .swarm_tools import SWARM_TOOL_SPECS
-
-    for tool_def in SWARM_TOOL_SPECS:
-        reg.register(Tool(
-            name=tool_def["name"],
-            description=tool_def["description"],
-            input_schema=tool_def["input_schema"],
-            handler=tool_def["handler"],
-            category=tool_def.get("category", "swarm"),
-        ))
-
-    # Acontext-style skill memory tools (markdown skills on disk)
-    from .acontext_tools import ACONTEXT_TOOLS
-
-    for tool_def in ACONTEXT_TOOLS:
-        reg.register(Tool(
-            name=tool_def["name"],
-            description=tool_def["description"],
-            input_schema=tool_def["input_schema"],
-            handler=tool_def["handler"],
-            category=tool_def.get("category", "acontext"),
-        ))
-
-    # ANUS-style autonomous mode (context, planner, executor, learner)
-    from .autonomous_tools import AUTONOMOUS_TOOLS
-
-    for tool_def in AUTONOMOUS_TOOLS:
-        reg.register(Tool(
-            name=tool_def["name"],
-            description=tool_def["description"],
-            input_schema=tool_def["input_schema"],
-            handler=tool_def["handler"],
-            category=tool_def.get("category", "autonomous"),
-        ))
 
     return reg
 
@@ -1252,7 +910,7 @@ class MCPServer:
     """Minimal MCP server implementation using stdio or SSE."""
 
     SERVER_NAME = "graxia_tool"
-    SERVER_VERSION = "0.3.0"
+    SERVER_VERSION = "0.4.0"
     PROTOCOL_VERSION = "2024-11-05"
 
     def __init__(self, registry: Optional[ToolRegistry] = None):
