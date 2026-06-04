@@ -1157,6 +1157,20 @@ def main() -> None:
     if sys.platform == "win32":
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
+    # Check for preloaded caches
+    try:
+        from .fast_path import CACHE_DIR
+        warm_marker = CACHE_DIR / "brain_warm.flag"
+        if warm_marker.exists():
+            import json as _json
+            with open(warm_marker) as _f:
+                marker = _json.load(_f)
+            age = time.time() - marker.get("timestamp", 0)
+            if age < 3600:
+                logger.info("brain_cache_warm age_min=%d", int(age / 60))
+    except Exception:
+        pass
+
     parser = argparse.ArgumentParser(description="Agent OS MCP Server")
     parser.add_argument("--transport", choices=["stdio", "sse"], default="stdio")
     parser.add_argument("--host", default="127.0.0.1")
