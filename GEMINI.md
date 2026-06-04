@@ -1,3 +1,37 @@
+## MANDATORY STARTUP (before ANY work)
+
+**STEP 1:** Call `auto_route` with the user's first message.
+**STEP 2:** Call `memory_recall` to check past work.
+**STEP 3:** Start working.
+
+Example:
+```
+Tool call: auto_route(prompt="the user's message here")
+Tool call: memory_recall(query="keywords from the task")
+Then: do the actual work
+```
+
+## Rules
+
+- Do what has been asked; nothing more, nothing less
+- NEVER create files unless absolutely necessary
+- ALWAYS read a file before editing it
+- NEVER commit secrets or .env files
+- Keep files under 500 lines
+
+## Graxia Tools — Call These First
+
+| When | Tool | Example |
+|------|------|---------|
+| **Start** | `auto_route` | route the user's prompt |
+| **Start** | `memory_recall` | check if done before |
+| **During** | `graxia_memory_ext(action="learn")` | learn from this task |
+| **During** | `graxia_data(action="generate")` | generate test data |
+| **After** | `memory_store` | store what you learned |
+| **After** | `cost_report` | track token usage |
+
+Full list: agent_run, agent_list, pipeline_run, multi_agent_run, system_status, auto_route, guard_check, memory_search, memory_recall, memory_store, rag_query, cache_get, cache_set, cost_report, context_cache_get, graxia_skills, graxia_vault, graxia_vault_auto, graxia_memory_ext, graxia_swarm, graxia_autonomous, graxia_data, graxia_optimize, governance_check, eval_run, context_cache_stats
+
 ## graphify
 
 This project has a knowledge graph at graphify-out/ with god nodes, community structure, and cross-file relationships.
@@ -7,27 +41,3 @@ Rules:
 - If graphify-out/wiki/index.md exists, use it for broad navigation instead of raw source browsing.
 - Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context.
 - After modifying code, run `graphify update .` to keep the graph current (AST-only, no API cost).
-
-## graxia
-
-Graxia Tool is an AI agent platform with 26 MCP tools, 102 agents, and autonomous execution.
-
-MCP Server: `python -m graxia_tool.mcp`
-Tools: `graxia_memory_ext`, `graxia_swarm`, `graxia_autonomous`, `graxia_data`, `graxia_vault`, `graxia_vault_auto`, `graxia_skills`, `graxia_optimize`
-
-### Startup Protocol (EVERY SESSION)
-1. `auto_route` — route the user's prompt to optimal skills/RAG/agent/model
-2. `memory_recall` — check if this task was done before
-3. `context_cache_get` — check for cached routing decisions
-
-### Task Execution
-4. `graxia_memory_ext(action="learn")` — distill what you learned into skill files
-5. `graxia_memory_ext(action="recall", query="...")` — find relevant past knowledge
-6. `graxia_data(action="generate")` — generate test data (Thai locale available)
-7. `graxia_swarm` — coordinate multiple agents for complex tasks
-8. `graxia_autonomous` — plan and execute autonomous tasks
-
-### After Task
-9. `memory_store` — store the outcome (task type, success, what was learned)
-10. `cache_set` — cache the routing decision
-11. `cost_report` — track token usage
