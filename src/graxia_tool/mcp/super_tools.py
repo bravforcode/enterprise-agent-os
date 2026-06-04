@@ -74,10 +74,10 @@ GRAXIA_SKILLS_SCHEMA = {
 # ─────────────────────────────────────────────────────────────────────────────
 
 async def graxia_vault_handler(args: Dict[str, Any]) -> Dict[str, Any]:
-    """Manage Obsidian vault — actions: search, read, write, link, tag, moc, tasks, graph."""
+    """Manage Obsidian vault — actions: search, read, write, link, tag, moc, tasks, graph, analytics."""
     action = args.get("action")
     if not action:
-        return _err("action is required. Use: search, read, write, link, tag, moc, tasks, graph")
+        return _err("action is required. Use: search, read, write, link, tag, moc, tasks, graph, analytics")
 
     if action == "search":
         from ..integrations.obsidian import ObsidianBridge
@@ -143,7 +143,11 @@ async def graxia_vault_handler(args: Dict[str, Any]) -> Dict[str, Any]:
         from .vault_tools import vault_graph
         return await vault_graph(args)
 
-    return _err(f"Unknown action: {action}. Use: search, read, write, link, tag, moc, tasks, graph")
+    elif action == "analytics":
+        from .vault_tools import vault_analytics
+        return await vault_analytics(args)
+
+    return _err(f"Unknown action: {action}. Use: search, read, write, link, tag, moc, tasks, graph, analytics")
 
 
 GRAXIA_VAULT_SCHEMA = {
@@ -151,7 +155,7 @@ GRAXIA_VAULT_SCHEMA = {
     "properties": {
         "action": {
             "type": "string",
-            "enum": ["search", "read", "write", "link", "tag", "moc", "tasks", "graph"],
+            "enum": ["search", "read", "write", "link", "tag", "moc", "tasks", "graph", "analytics"],
             "description": "Sub-action to perform.",
         },
         "query": {"type": "string", "description": "Search query (for search)."},
@@ -627,7 +631,7 @@ SUPER_TOOLS = [
     },
     {
         "name": "graxia_vault",
-        "description": "Manage Obsidian vault — actions: search, read, write, link, tag, moc, tasks, graph.",
+        "description": "Manage Obsidian vault — actions: search, read, write, link, tag, moc, tasks, graph, analytics.",
         "input_schema": GRAXIA_VAULT_SCHEMA,
         "handler": graxia_vault_handler,
         "category": "vault",

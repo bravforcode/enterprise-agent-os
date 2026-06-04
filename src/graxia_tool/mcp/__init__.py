@@ -161,7 +161,7 @@ async def _pipeline_run(args: Dict[str, Any]) -> Dict[str, Any]:
 
 async def _guard_check(args: Dict[str, Any]) -> Dict[str, Any]:
     """Check input/output through guardrails."""
-    from ..guards import InputGuard, OutputGuard
+    from ..guards import check_input, check_output
 
     text = args.get("text", "")
     direction = args.get("direction", "input")  # input | output
@@ -171,17 +171,15 @@ async def _guard_check(args: Dict[str, Any]) -> Dict[str, Any]:
 
     try:
         if direction == "input":
-            guard = InputGuard()
-            result = await guard.check(text)
+            result = check_input(text)
         else:
-            guard = OutputGuard()
-            result = await guard.check(text)
+            result = check_output(text)
 
         return _ok({
-            "allowed": getattr(result, "allowed", True),
-            "risk_level": getattr(result, "risk_level", "low"),
-            "issues": getattr(result, "issues", []),
-            "sanitized": getattr(result, "sanitized_text", text),
+            "allowed": result.passed,
+            "risk_level": result.severity,
+            "issues": [result.reason] if not result.passed else [],
+            "sanitized": text,
         })
     except Exception as e:
         logger.exception("guard_check failed")
@@ -214,18 +212,31 @@ async def _rag_query(args: Dict[str, Any]) -> Dict[str, Any]:
 
     query = args.get("query", "")
     top_k = int(args.get("top_k", 5))
-    collection = args.get("collection", "default")
 
     if not query:
         return _err("query is required")
 
     try:
         rag = RAGOS()
-        results = await rag.query(query, top_k=top_k, collection=collection)
-        return _ok({"results": results, "count": len(results) if isinstance(results, list) else 0})
+        result = rag.query(query, top_k=top_k)
+        # RAGOS.query() returns a RAGResult dataclass — serialise it
+        return _ok({
+            "query": result.query,
+            "results": [
+                {"content": r.chunk.content, "score": r.score, "citation": r.citation}
+                for r in result.chunks
+            ],
+            "context": result.context,
+            "citations": result.citations,
+            "estimated_tokens": result.estimated_tokens,
+        })
     except Exception as e:
         logger.exception("rag_query failed")
         return _err(f"{type(e).__name__}: {e}")
+
+
+# In-memory fallback cache (used when Redis is unavailable)
+_FALLBACK_CACHE: Dict[str, Any] = {}
 
 
 async def _cache_get(args: Dict[str, Any]) -> Dict[str, Any]:
@@ -242,9 +253,10 @@ async def _cache_get(args: Dict[str, Any]) -> Dict[str, Any]:
         if asyncio.iscoroutine(result):
             result = await result
         return _ok({"key": key, "value": result, "hit": result is not None})
-    except Exception as e:
-        logger.exception("cache_get failed")
-        return _err(f"{type(e).__name__}: {e}")
+    except Exception:
+        # Redis unavailable — fall back to in-memory cache
+        value = _FALLBACK_CACHE.get(key)
+        return _ok({"key": key, "value": value, "hit": value is not None, "backend": "memory"})
 
 
 async def _cache_set(args: Dict[str, Any]) -> Dict[str, Any]:
@@ -264,9 +276,10 @@ async def _cache_set(args: Dict[str, Any]) -> Dict[str, Any]:
         if asyncio.iscoroutine(set_result):
             await set_result
         return _ok({"key": key, "stored": True, "ttl": ttl})
-    except Exception as e:
-        logger.exception("cache_set failed")
-        return _err(f"{type(e).__name__}: {e}")
+    except Exception:
+        # Redis unavailable — fall back to in-memory cache
+        _FALLBACK_CACHE[key] = value
+        return _ok({"key": key, "stored": True, "ttl": ttl, "backend": "memory"})
 
 
 async def _cost_report(args: Dict[str, Any]) -> Dict[str, Any]:
@@ -782,7 +795,6 @@ def build_default_registry() -> ToolRegistry:
             "properties": {
                 "query": {"type": "string"},
                 "top_k": {"type": "integer", "default": 5},
-                "collection": {"type": "string", "default": "default"},
             },
             "required": ["query"],
         },
