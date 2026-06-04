@@ -42,6 +42,23 @@ GRAXIA_MCP_CONFIG = {
 }
 
 
+def _graphify_mcp_config() -> Optional[dict]:
+    """Return graphify MCP config if graphify is installed and graph exists."""
+    try:
+        import graphify  # noqa: F401
+    except ImportError:
+        return None
+    # Find graph.json in common locations
+    for loc in ["graphify-out/graph.json", "src/graxia_tool/graphify-out/graph.json"]:
+        if Path(loc).exists():
+            return {
+                "command": sys.executable,
+                "args": ["-m", "graphify.serve", loc],
+                "env": {},
+            }
+    return None
+
+
 def _config_path_claude() -> Path:
     """Claude Desktop config path."""
     system = platform.system().lower()
@@ -91,6 +108,9 @@ def configure_claude_desktop() -> bool:
     config = _read_json(path)
     servers = config.setdefault("mcpServers", {})
     servers["graxia"] = GRAXIA_MCP_CONFIG
+    gf = _graphify_mcp_config()
+    if gf:
+        servers["graphify"] = gf
     _write_json(path, config)
     return True
 
@@ -104,6 +124,9 @@ def configure_codex() -> bool:
     # Codex config is typically YAML but we use JSON-style here
     mcp = config.setdefault("mcpServers", {})
     mcp["graxia"] = GRAXIA_MCP_CONFIG
+    gf = _graphify_mcp_config()
+    if gf:
+        mcp["graphify"] = gf
     _write_json(path, config)
     return True
 
@@ -114,6 +137,9 @@ def configure_gemini() -> bool:
     config = _read_json(path)
     mcp = config.setdefault("mcpServers", {})
     mcp["graxia"] = GRAXIA_MCP_CONFIG
+    gf = _graphify_mcp_config()
+    if gf:
+        mcp["graphify"] = gf
     _write_json(path, config)
     return True
 
@@ -125,6 +151,9 @@ def configure_opencode() -> bool:
     mcp = config.setdefault("mcp", {})
     servers = mcp.setdefault("servers", {})
     servers["graxia"] = GRAXIA_MCP_CONFIG
+    gf = _graphify_mcp_config()
+    if gf:
+        servers["graphify"] = gf
     _write_json(path, config)
     return True
 

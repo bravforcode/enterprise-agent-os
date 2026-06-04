@@ -91,6 +91,10 @@ ml = [
 rag = [
     # RAG extras (numpy already in core deps)
 ]
+graphify = [
+    # Knowledge graph for codebase understanding
+    "graphifyy[mcp]",
+]
 dev = [
     "pytest>=8.3.0",
     "pytest-asyncio>=0.24.0",
