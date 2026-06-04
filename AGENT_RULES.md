@@ -3,55 +3,68 @@
 ## MANDATORY STARTUP
 
 **BEFORE responding to ANY user message:**
-1. `auto_route(prompt="user's message")` — route to best tools
-2. `memory_recall(query="keywords")` — load past context
+1. `brain(action="auto_route", prompt="user's message")` — route to best tools
+2. `brain(action="recall", query="keywords")` — load past context
 3. Work on task
-4. `memory_store(...)` — save progress
+4. `brain(action="store", content="...", memory_type="task")` — save progress
 
-## Tool Usage Rules
+## 5 Tools, 39 Actions
 
-| Task | Tool | When |
-|------|------|------|
-| Any question | `auto_route` | ALWAYS first |
-| Coding | `rag_query` | Search codebase |
-| File ops | `lean-ctx_ctx_read` | Not raw read |
-| Search | `lean-ctx_ctx_search` | Not raw grep |
-| Features | `graxia_skills(action="load")` | Load skill |
-| Debug | `skill_search(query="debug")` | Find skill |
-| Complex work | `graxia_swarm` | Multi-agent |
-| Memory | `graxia_memory_ext(action="recall")` | Check first |
-| Review | `graxia_skills(action="load", skill_name="code-reviewer")` | Load review |
-| Planning | `graxia_skills(action="load", skill_name="writing-plans")` | Load plan |
-
-**NEVER** respond without calling tools first.
-
-## Available Tools (19 essential)
-
-| Tool | Purpose |
-|------|---------|
-| `auto_route` | Route to best tools/skills |
-| `memory_recall` | Recall past memories |
-| `memory_store` | Store new memories |
-| `rag_query` | Search documents |
+### `brain` — All knowledge + memory (17 actions)
+| Action | Purpose |
+|--------|---------|
+| `recall` | Search past memories |
+| `store` | Store new memories |
+| `search` | Search codebase (RAG) |
+| `hybrid_search` | Hybrid BM25+vector search |
 | `skill_search` | Search 403+ skills |
-| `graxia_skills` | Load/manage skills |
-| `graxia_vault` | Obsidian vault ops |
-| `graxia_memory_ext` | Extended memory |
-| `graxia_data` | Generate data |
-| `graxia_optimize` | Token optimization |
-| `system_status` | System health |
-| `agent_list` | List agents |
-| `guard_check` | Input/output guard |
-| `cache_get/set` | Cache ops |
-| `cost_report` | Cost tracking |
-| `governance_check` | Safety + audit + content filter |
-| `workflow_run` | Chain/parallel/router/orchestrator/evaluator |
-| `hybrid_rag_search` | Hybrid search + rerank |
-| `incremental_sync` | Sync + status + trigger |
+| `skill_load` | Load full skill content |
+| `skill_list` | List loaded skills |
+| `vault_search` | Search Obsidian vault |
+| `vault_read` | Read vault note |
+| `vault_write` | Write vault note |
+| `vault_analytics` | Vault statistics |
+| `sync` | Incremental sync status |
+| `sync_task` | Sync specific task |
+| `sync_all` | Sync all |
+| `learn` | Distill session into skill |
+| `memory_stats` | Memory statistics |
+| `auto_route` | Route to best tools |
 
-## Skills
+### `run` — Execute tasks + workflows (8 actions)
+| Action | Purpose |
+|--------|---------|
+| `agent` | Run single agent |
+| `chain` | Chain agents in sequence |
+| `parallel` | Run agents in parallel |
+| `router` | Route to best agent |
+| `orchestrator` | Plan and execute |
+| `evaluator` | Generate→evaluate→refine |
+| `pipeline` | Guard→route→execute→validate |
+| `agents` | List available agents |
 
-- 403+ skills from repos (awesome-copilot, AI-Research, openclaw)
-- Location: `src/graxia_tool/skills/`
-- Search: `skill_search(query="...")`
-- Load: `graxia_skills(action="load", skill_name="...")`
+### `guard` — Safety + quality (6 actions)
+| Action | Purpose |
+|--------|---------|
+| `check` | Input/output guard |
+| `filter` | Content filter |
+| `audit` | Audit trail query |
+| `audit_stats` | Governance statistics |
+| `optimize` | Token optimization |
+| `cost` | Cost report |
+
+### `data` — Data generation (3 actions)
+| Action | Purpose |
+|--------|---------|
+| `generate` | Generate fake data |
+| `locales` | List available locales |
+| `schema` | Generate from schema |
+
+### `sys` — System + cache (5 actions)
+| Action | Purpose |
+|--------|---------|
+| `status` | System health |
+| `agents` | List available agents |
+| `cache_get` | Get cached value |
+| `cache_set` | Set cached value |
+| `cache_stats` | Cache statistics |
