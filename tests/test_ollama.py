@@ -180,42 +180,56 @@ def test_openai_models_have_costs():
 # ----- Factory -----
 
 
-def test_factory_returns_ollama_by_default(monkeypatch):
+def test_factory_returns_hybrid_by_default(monkeypatch):
+    """No keys set -> HybridLLMClient (with Ollama fallback)."""
+    from graxia_tool.llm import HybridLLMClient
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     client = get_llm_client()
-    assert isinstance(client, OllamaClient)
+    assert isinstance(client, HybridLLMClient), f"Got {type(client).__name__}"
 
 
 def test_factory_anthropic_with_key(monkeypatch):
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
     client = get_llm_client("claude-3-5-sonnet-20241022")
     assert isinstance(client, AnthropicClient)
 
 
 def test_factory_openai_with_key(monkeypatch):
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     client = get_llm_client("gpt-4o")
     assert isinstance(client, OpenAIClient)
 
 
 def test_factory_explicit_ollama(monkeypatch):
+    """Explicit Ollama model name -> bare OllamaClient (no hybrid wrapper)."""
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     client = get_llm_client("llama3.2")
     assert isinstance(client, OllamaClient)
 
 
 def test_factory_qwen_routes_to_ollama(monkeypatch):
+    """qwen2.5 model name -> bare OllamaClient."""
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     client = get_llm_client("qwen2.5")
     assert isinstance(client, OllamaClient)
 
 
-def test_factory_codellama_routes_to_ollama():
+def test_factory_codellama_routes_to_ollama(monkeypatch):
+    """codellama model name -> bare OllamaClient."""
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     client = get_llm_client("codellama")
     assert isinstance(client, OllamaClient)
 
 
 @pytest.mark.asyncio
-async def test_factory_async_picks_ollama_when_running():
+async def test_factory_async_picks_hybrid_with_ollama(monkeypatch):
+    """Async factory should return HybridLLMClient that can use Ollama when available."""
+    from graxia_tool.llm import HybridLLMClient
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     ollama = OllamaClient()
     ollama._client = MagicMock()
     mock_response = MagicMock()
@@ -224,7 +238,9 @@ async def test_factory_async_picks_ollama_when_running():
 
     with patch("graxia_tool.llm.OllamaClient", return_value=ollama):
         client = await get_llm_client_async()
-        assert isinstance(client, OllamaClient)
+        # New factory returns HybridLLMClient (which can use Ollama when OR is unavailable)
+        from graxia_tool.llm import HybridLLMClient
+        assert isinstance(client, HybridLLMClient), f"Got {type(client).__name__}"
 
 
 # ----- Mock LLM Client -----

@@ -219,6 +219,17 @@ AGENT_REGISTRY: dict[str, type[BaseSubAgent]] = {
 }
 
 
+# Auto-register extended agents from the swarm package (Track T2 — 80+ more).
+# This pushes the registry to 100+ agents. Importing the swarm package is
+# cheap (no network, no I/O) and isolated behind a try/except so a missing
+# optional dep does not break the agents module.
+try:
+    from ..swarm.agents_extended import register_extended_agents
+    _EXTENDED_ADDED = register_extended_agents(AGENT_REGISTRY)
+except Exception:  # pragma: no cover - swarm package is optional
+    _EXTENDED_ADDED = 0
+
+
 def get_agent(name: str, **kwargs) -> Optional[BaseSubAgent]:
     """Get an agent by name."""
     cls = AGENT_REGISTRY.get(name)

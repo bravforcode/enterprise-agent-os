@@ -82,34 +82,40 @@ class TestFactory:
     """Tests for LLM factory."""
 
     def test_ollama_default(self):
-        """Should return Ollama when no keys set (no API key needed)."""
+        """Should return HybridLLMClient by default (no key needed, falls back to Ollama)."""
         with patch.dict(os.environ, {}, clear=True):
-            client = get_llm_client("anything")
-            assert isinstance(client, OllamaClient)
+            client = get_llm_client("auto")
+            from graxia_tool.llm import HybridLLMClient
+            assert isinstance(client, HybridLLMClient), f"Got {type(client).__name__}"
+            assert client._openrouter_key is None  # no OR key -> OR disabled
 
     def test_anthropic_with_key(self):
-        """Should return AnthropicClient when key set."""
-        with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"}):
+        """Should return AnthropicClient when key set (explicit claude-* model)."""
+        with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key", "OPENROUTER_API_KEY": ""}, clear=False):
+            os.environ.pop("OPENROUTER_API_KEY", None)
             client = get_llm_client("claude-3-5-haiku-20241022")
             assert isinstance(client, AnthropicClient)
 
     def test_openai_with_key(self):
-        """Should return OpenAIClient when key set."""
-        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}):
+        """Should return OpenAIClient when key set (explicit gpt-* model)."""
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=False):
+            os.environ.pop("OPENROUTER_API_KEY", None)
             client = get_llm_client("gpt-4o-mini")
             assert isinstance(client, OpenAIClient)
 
     def test_anthropic_no_key_fallback(self):
-        """Should fallback to Ollama if no key (no API key needed)."""
+        """Should fallback to HybridLLMClient if no key (works with Ollama offline)."""
         with patch.dict(os.environ, {}, clear=True):
+            from graxia_tool.llm import HybridLLMClient
             client = get_llm_client("claude-3-5-sonnet-20241022")
-            assert isinstance(client, OllamaClient)
+            assert isinstance(client, HybridLLMClient), f"Got {type(client).__name__}"
 
     def test_openai_no_key_fallback(self):
-        """Should fallback to Ollama if no key (no API key needed)."""
+        """Should fallback to HybridLLMClient if no key (works with Ollama offline)."""
         with patch.dict(os.environ, {}, clear=True):
+            from graxia_tool.llm import HybridLLMClient
             client = get_llm_client("gpt-4")
-            assert isinstance(client, OllamaClient)
+            assert isinstance(client, HybridLLMClient), f"Got {type(client).__name__}"
 
 
 # --- Anthropic Client Tests (mocked HTTP) ---

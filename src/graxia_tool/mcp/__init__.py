@@ -1117,6 +1117,18 @@ def build_default_registry() -> ToolRegistry:
             category=tool_def.get("category", "learning"),
         ))
 
+    # Faker / synthetic data tools
+    from .faker_tools import FAKER_TOOLS
+
+    for tool_def in FAKER_TOOLS:
+        reg.register(Tool(
+            name=tool_def["name"],
+            description=tool_def["description"],
+            input_schema=tool_def["input_schema"],
+            handler=tool_def["handler"],
+            category=tool_def.get("category", "faker"),
+        ))
+
     # Auto-router, memory, cache tools
     reg.register(Tool(
         name="auto_route",
@@ -1195,6 +1207,42 @@ def build_default_registry() -> ToolRegistry:
         category="cache",
     ))
 
+    # Track T2 — Swarm + Federation + SONA-lite tools
+    from .swarm_tools import SWARM_TOOL_SPECS
+
+    for tool_def in SWARM_TOOL_SPECS:
+        reg.register(Tool(
+            name=tool_def["name"],
+            description=tool_def["description"],
+            input_schema=tool_def["input_schema"],
+            handler=tool_def["handler"],
+            category=tool_def.get("category", "swarm"),
+        ))
+
+    # Acontext-style skill memory tools (markdown skills on disk)
+    from .acontext_tools import ACONTEXT_TOOLS
+
+    for tool_def in ACONTEXT_TOOLS:
+        reg.register(Tool(
+            name=tool_def["name"],
+            description=tool_def["description"],
+            input_schema=tool_def["input_schema"],
+            handler=tool_def["handler"],
+            category=tool_def.get("category", "acontext"),
+        ))
+
+    # ANUS-style autonomous mode (context, planner, executor, learner)
+    from .autonomous_tools import AUTONOMOUS_TOOLS
+
+    for tool_def in AUTONOMOUS_TOOLS:
+        reg.register(Tool(
+            name=tool_def["name"],
+            description=tool_def["description"],
+            input_schema=tool_def["input_schema"],
+            handler=tool_def["handler"],
+            category=tool_def.get("category", "autonomous"),
+        ))
+
     return reg
 
 
@@ -1204,7 +1252,7 @@ class MCPServer:
     """Minimal MCP server implementation using stdio or SSE."""
 
     SERVER_NAME = "graxia_tool"
-    SERVER_VERSION = "0.2.0"
+    SERVER_VERSION = "0.3.0"
     PROTOCOL_VERSION = "2024-11-05"
 
     def __init__(self, registry: Optional[ToolRegistry] = None):
@@ -1266,35 +1314,46 @@ class MCPServer:
     # ------------------------------------------------------------------------
 
     async def run_stdio(self) -> None:
-        """Run the server over stdio (JSON-RPC newline-delimited)."""
+        """Run the server over stdio (JSON-RPC newline-delimited).
+
+        Uses a thread-based stdin reader to avoid the Windows asyncio
+        ProactorEventLoop + connect_read_pipe(sys.stdin) bug.
+        """
         logger.info("MCP server starting on stdio")
         loop = asyncio.get_event_loop()
-        reader = asyncio.StreamReader()
-        transport, _ = await loop.connect_read_pipe(
-            lambda: asyncio.StreamReaderProtocol(reader), sys.stdin
-        )
-        try:
-            while True:
-                line_bytes = await reader.readline()
-                if not line_bytes:
-                    break
-                line = line_bytes.decode("utf-8").strip()
-                if not line:
-                    continue
-                try:
-                    req = json.loads(line)
-                except json.JSONDecodeError as e:
-                    sys.stdout.write(json.dumps(make_error(None, -32700, f"Parse error: {e}")) + "\n")
-                    sys.stdout.flush()
-                    continue
-                response = await self.handle_request(req)
-                if response is not None:
-                    sys.stdout.write(json.dumps(response) + "\n")
-                    sys.stdout.flush()
-        except asyncio.CancelledError:
-            pass
-        finally:
-            transport.close()
+
+        def blocking_reader() -> None:
+            """Read line-by-line from stdin, dispatch async, write to stdout."""
+            try:
+                for line in sys.stdin:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        req = json.loads(line)
+                    except json.JSONDecodeError as e:
+                        sys.stdout.write(
+                            json.dumps(make_error(None, -32700, f"Parse error: {e}")) + "\n"
+                        )
+                        sys.stdout.flush()
+                        continue
+                    future = asyncio.run_coroutine_threadsafe(
+                        self.handle_request(req), loop
+                    )
+                    try:
+                        response = future.result()
+                    except Exception as e:
+                        logger.exception("handle_request failed in stdio thread")
+                        response = make_error(req.get("id"), -32603, f"Internal error: {e}")
+                    if response is not None:
+                        sys.stdout.write(json.dumps(response) + "\n")
+                        sys.stdout.flush()
+            except (EOFError, KeyboardInterrupt):
+                pass
+            except Exception:
+                logger.exception("stdin reader crashed")
+
+        await loop.run_in_executor(None, blocking_reader)
 
     # ------------------------------------------------------------------------
     # SSE / HTTP transport (optional)
@@ -1338,6 +1397,9 @@ class MCPServer:
 
 def main() -> None:
     import argparse
+
+    if sys.platform == "win32":
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
     parser = argparse.ArgumentParser(description="Agent OS MCP Server")
     parser.add_argument("--transport", choices=["stdio", "sse"], default="stdio")

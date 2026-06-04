@@ -1,14 +1,15 @@
 """Graxia Tool — One-line installer.
 
-Installs everything needed to use Graxia with no API key:
-1. Installs graxia_tool via pip
-2. Ensures Ollama is installed and running
+Installs everything needed to use Graxia with OpenRouter (free) or Ollama (offline):
+1. Checks OPENROUTER_API_KEY (recommended — free cloud, auto-fallback chain)
+2. Ensures Ollama is installed and running (offline fallback)
 3. Pulls default model
-4. Configures MCP clients (Claude Desktop, Codex, Gemini, OpenCode)
+4. Configures MCP clients (Claude Desktop, Codex, Gemini, OpenCode, Cursor)
 5. Creates launcher scripts
 
 Usage:
     pip install graxia-tool
+    # Optional: set OPENROUTER_API_KEY in env for cloud free tier
     python -c "from graxia_tool.installer import install; install()"
     # Or:
     graxia-install
@@ -265,13 +266,50 @@ def install(
 
     result = {
         "ollama": None,
+        "openrouter": None,
         "clients": {},
         "scripts": {},
         "shortcut": None,
         "ready": False,
     }
 
-    # Step 1: Ensure Ollama
+    # Step 0: Check OpenRouter (preferred — free tier with auto-fallback chain)
+    print("[0/5] Checking OpenRouter (free cloud LLM with auto-fallback)...")
+    or_key = os.environ.get("OPENROUTER_API_KEY", "").strip()
+    if or_key:
+        try:
+            from .llm import OpenRouterClient
+            or_client = OpenRouterClient(api_key=or_key)
+            chain = list(or_client.fallback_chain)
+            result["openrouter"] = {
+                "configured": True,
+                "fallback_chain": chain,
+            }
+            # Probe the primary model with a tiny request (best-effort, don't fail install)
+            try:
+                async def _probe():
+                    try:
+                        return await or_client.complete("ok", max_tokens=5)
+                    finally:
+                        await or_client.close()
+                probe = asyncio.run(_probe())
+                print(f"  [OK] OpenRouter ready: primary model = {probe.model}")
+                result["openrouter"]["primary_model"] = probe.model
+            except Exception as probe_err:
+                err_short = str(probe_err)[:150]
+                print(f"  ! OpenRouter key set, probe failed (rate-limited?): {err_short}")
+                print(f"    (Will still work at runtime — fallback chain will try other models)")
+                result["openrouter"]["probe_error"] = err_short
+        except ImportError:
+            print("  ! Could not import OpenRouterClient")
+            result["openrouter"] = {"configured": bool(or_key), "error": "import_failed"}
+    else:
+        print("  No OPENROUTER_API_KEY in env -- OpenRouter disabled.")
+        print("  Get a free key at https://openrouter.ai/keys and set:")
+        print("    [System.Environment]::SetEnvironmentVariable('OPENROUTER_API_KEY', 'sk-or-v1-...', 'User')")
+        result["openrouter"] = {"configured": False}
+
+    # Step 1: Ensure Ollama (fallback for offline use)
     try:
         from .ollama_helper import ensure_ollama, is_ollama_installed, get_ollama_install_url
     except ImportError:
@@ -283,7 +321,7 @@ def install(
             result["ollama"] = {"installed": False, "running": False, "model_available": False}
             return result
 
-    print("[1/4] Checking Ollama...")
+    print("[1/5] Checking Ollama (offline fallback)...")
     if not is_ollama_installed():
         print(f"  Ollama not found. Download from: {get_ollama_install_url()}")
         result["ollama"] = {"installed": False, "running": False, "model_available": False}
@@ -298,7 +336,7 @@ def install(
     # Step 2: Configure MCP clients
     if configure_clients:
         print()
-        print("[2/4] Configuring MCP clients...")
+        print("[2/5] Configuring MCP clients...")
         try:
             result["clients"] = configure_all_clients()
             for name, ok in result["clients"].items():
@@ -311,7 +349,7 @@ def install(
 
     # Step 3: Create launcher scripts
     print()
-    print("[3/4] Creating launcher scripts...")
+    print("[3/5] Creating launcher scripts...")
     try:
         scripts = create_launcher_scripts()
         result["scripts"] = {k: str(v) for k, v in scripts.items()}
@@ -323,7 +361,7 @@ def install(
     # Step 4: Desktop shortcut (Windows only)
     if create_shortcuts and platform.system().lower() == "windows":
         print()
-        print("[4/4] Creating desktop shortcut...")
+        print("[4/5] Creating desktop shortcut...")
         try:
             shortcut = create_desktop_shortcut_windows()
             if shortcut:
@@ -335,25 +373,37 @@ def install(
             print(f"  ! Shortcut error: {e}")
     else:
         print()
-        print("[4/4] Skipping desktop shortcut (not Windows or disabled)")
+        print("[4/5] Skipping desktop shortcut (not Windows or disabled)")
 
-    # Summary
+    # Step 5: Summary
     print()
+    print("[5/5] Summary")
     print("=" * 60)
+    or_ready = result.get("openrouter", {}).get("configured", False) if isinstance(result.get("openrouter"), dict) else False
     ollama_ready = result.get("ollama", {}).get("ready", False) if isinstance(result.get("ollama"), dict) else False
-    if ollama_ready:
-        print("  [OK] Graxia Tool is ready to use!")
+    if or_ready:
+        chain = result["openrouter"].get("fallback_chain", [])
+        primary = result["openrouter"].get("primary_model", chain[0] if chain else "?")
+        print(f"  LLM: OpenRouter (free, cloud, {len(chain)}-model fallback chain)")
+        print(f"  Primary: {primary}")
+        if len(chain) > 1:
+            print(f"  Fallbacks: {len(chain) - 1} models")
         result["ready"] = True
+    elif ollama_ready:
+        print(f"  LLM: Ollama (local, offline)")
+        result["ready"] = True
+    else:
+        print("  ! No LLM ready.")
+        print("    Recommended: set OPENROUTER_API_KEY (free) — see [0/5] output above.")
+        print("    Alternative: install Ollama from https://ollama.com")
+
+    if result["ready"]:
         print()
         print("  Quick start:")
         print("    - Run 'graxia' to start the web UI")
         print("    - Run 'graxia-mcp' to start the MCP server")
-        print("    - Configure Claude Desktop / Codex / Gemini / OpenCode")
+        print("    - Configure Claude Desktop / Codex / Gemini / OpenCode / Cursor")
         print("      to use Graxia as an MCP server")
-    else:
-        print("  ! Graxia installed, but Ollama is not ready.")
-        print("    Please install Ollama from https://ollama.com")
-        print("    Then run: ollama serve && ollama pull llama3.2")
     print("=" * 60)
 
     return result

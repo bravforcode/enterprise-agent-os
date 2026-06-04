@@ -7,6 +7,8 @@ Usage:
     python -m graxia_tool agents          # List available agents
     python -m graxia_tool status          # Show system status
     python -m graxia_tool ollama          # Setup Ollama
+    python -m graxia_tool auto-demo       # Run the autonomous end-to-end demo
+    python -m graxia_tool verify          # Run the T5 integration check
 """
 from __future__ import annotations
 
@@ -29,6 +31,9 @@ def main():
     subparsers.add_parser("agents", help="List available agents")
     subparsers.add_parser("status", help="Show system status")
     subparsers.add_parser("ollama", help="Setup Ollama")
+    subparsers.add_parser("auto-demo", help="Run the autonomous end-to-end demo")
+    subparsers.add_parser("verify", help="Run the T5 integration verification")
+    subparsers.add_parser("smoke", help="Run a one-tool-per-track smoke test")
 
     # If no args, default to mcp
     if len(sys.argv) == 1:
@@ -91,6 +96,34 @@ def main():
         from .ollama_helper import ensure_ollama
         asyncio.run(ensure_ollama())
         return
+
+    if args.cmd == "auto-demo":
+        # Delegate to scripts/auto_demo.py (runnable script) via subprocess
+        # so the same code path is exercised whether the user invokes
+        # ``python scripts/auto_demo.py`` or ``graxia auto-demo``.
+        import subprocess
+        from pathlib import Path
+        script = Path(__file__).resolve().parents[2] / "scripts" / "auto_demo.py"
+        if not script.exists():
+            print(f"auto_demo.py not found at {script}")
+            sys.exit(1)
+        result = subprocess.run(
+            [sys.executable, str(script)],
+            cwd=str(script.parent.parent),
+        )
+        sys.exit(result.returncode)
+
+    if args.cmd == "verify":
+        from .integrate import verify_installation
+        import json
+        info = verify_installation()
+        print(json.dumps(info, indent=2, default=str))
+        sys.exit(0 if info["ok"] else 1)
+
+    if args.cmd == "smoke":
+        from .integrate import run_smoke_test
+        report = asyncio.run(run_smoke_test(verbose=True))
+        sys.exit(0 if report["ok"] else 2)
 
     # Default: start MCP server
     try:

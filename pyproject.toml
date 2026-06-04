@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "graxia-tool"
-version = "0.2.0"
-description = "Graxia Tool — Universal AI Agent OS with MCP server, cost engine, Obsidian + Graxia integration"
+version = "0.3.0"
+description = "Graxia Tool — Universal AI Agent OS: MCP server, 100+ agents, Acontext skill memory, Ruflo swarm, ANUS autonomous mode, Faker data generators, cost engine"
 readme = "QUICKSTART.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
@@ -25,9 +25,11 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 keywords = [
-    "ai", "agent", "llm", "mcp", "ollama",
+    "ai", "agent", "llm", "mcp", "ollama", "openrouter",
+    "acontext", "swarm", "autonomous", "faker",
     "agent-os", "multi-agent", "rag", "zero-setup",
     "claude", "codex", "gemini", "opencode",
+    "anus", "ruflo", "sona", "skill-memory",
 ]
 dependencies = [
     # Web framework
@@ -129,3 +131,6 @@ strict = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+markers = [
+    "integration: tests that hit real LLM/network endpoints (require API keys)",
+]
