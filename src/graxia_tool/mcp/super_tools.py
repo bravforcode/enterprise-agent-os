@@ -657,7 +657,7 @@ GRAXIA_OPTIMIZE_SCHEMA = {
 SUPER_TOOLS = [
     {
         "name": "graxia_skills",
-        "description": "Manage skills — actions: list, load.",
+        "description": "MANDATORY FOR SKILLS: Manage 485+ skills — actions: list (show loaded), load (activate skill by name). Auto-triggers on: feature creation, debugging, code review, planning, testing, deployment.",
         "input_schema": GRAXIA_SKILLS_SCHEMA,
         "handler": graxia_skills_handler,
         "category": "skills",
@@ -678,7 +678,7 @@ SUPER_TOOLS = [
     },
     {
         "name": "graxia_memory_ext",
-        "description": "Extended memory — actions: learn, list_skills, recall, get_skill, delete_skill, vault_sync_task, vault_sync_all, vault_search, vault_pull, vault_list, vault_moc, learning_stats, learning_suggest, learning_record, learning_reset.",
+        "description": "MANDATORY FOR MEMORY: Extended memory — actions: learn (distill session), recall (search past), vault_sync (sync knowledge), learning_stats (track progress). Auto-triggers on: every task completion, research, code discovery.",
         "input_schema": GRAXIA_MEMORY_EXT_SCHEMA,
         "handler": graxia_memory_ext_handler,
         "category": "acontext",

@@ -794,7 +794,7 @@ async def _skill_refresh_handler(args: dict[str, Any]) -> dict[str, Any]:
 SKILL_LOADER_TOOLS = [
     {
         "name": "skill_search",
-        "description": "Search skills by metadata (no full content loaded). Returns matching skills with relevance scores.",
+        "description": "MANDATORY FOR SKILL TASKS: Search 485+ skills by metadata. Auto-triggers on: feature creation, debugging, code review, planning, testing, deployment, research.",
         "input_schema": {
             "type": "object",
             "properties": {

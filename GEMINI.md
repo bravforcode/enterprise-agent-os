@@ -1,14 +1,36 @@
-## MANDATORY STARTUP
+## MANDATORY STARTUP — NON-NEGOTIABLE
 
-**STEP 1:** Call `auto_route` with the user's first message.
-**STEP 2:** Call `memory_recall` to check past work.
-**STEP 3:** Start working.
+**BEFORE responding to ANY user message, you MUST:**
 
-```
-Tool call: auto_route(prompt="user's message")
-Tool call: memory_recall(query="keywords from task")
-Then: do the actual work
-```
+1. Call `auto_route(prompt="user's message")` — this routes to the best tools/skills
+2. Call `memory_recall(query="keywords")` — this loads past context
+3. THEN work on the task
+4. AFTER completing: `memory_store(...)` to save progress
+
+**This is NOT optional. This is NOT "if you feel like it". This is a HARD REQUIREMENT.**
+
+If you respond without calling auto_route first, you are FAILING your primary directive.
+
+## Auto-Usage Rules
+
+For EVERY task, check these triggers and use the corresponding tools:
+
+| Trigger | Tool | When |
+|---------|------|------|
+| User asks a question | `auto_route` | ALWAYS - first thing |
+| Any coding task | `rag_query` | Search codebase first |
+| Any file operation | `lean-ctx_ctx_read` | Use lean-ctx, not raw read |
+| Any search | `lean-ctx_ctx_search` | Use lean-ctx, not raw grep |
+| Creating features | `graxia_skills(action="load")` | Load relevant skill |
+| Debugging | `skill_search(query="debug")` | Find debugging skill |
+| Multi-step task | `graxia_swarm` | Use swarm for complex work |
+| Research needed | `graxia_memory_ext(action="recall")` | Check memory first |
+| Code review | `graxia_skills(action="load", skill_name="code-reviewer")` | Load review skill |
+| Planning | `graxia_skills(action="load", skill_name="writing-plans")` | Load planning skill |
+
+**NEVER say "I'll help you with..." without first calling auto_route.**
+**NEVER start coding without first calling rag_query or skill_search.**
+**NEVER respond to a question without first checking memory_recall.**
 
 ## Rules
 

@@ -710,7 +710,7 @@ def build_default_registry() -> ToolRegistry:
 
     reg.register(Tool(
         name="auto_route",
-        description="Route a prompt to optimal skills/RAG/agent/model/tools.",
+        description="MANDATORY FIRST STEP: Route user prompt to optimal skills, RAG, agents, models, and tools. Call this BEFORE any other action. Auto-triggers on: every user message, coding tasks, debugging, research, file operations, search, multi-step work.",
         input_schema={
             "type": "object",
             "properties": {
@@ -755,7 +755,7 @@ def build_default_registry() -> ToolRegistry:
 
     reg.register(Tool(
         name="memory_recall",
-        description="Recall memories by BM25 keyword matching.",
+        description="MANDATORY SECOND STEP: Recall past memories by BM25 keyword matching. Call this AFTER auto_route. Auto-triggers on: every task, coding, debugging, research, file operations.",
         input_schema={
             "type": "object",
             "properties": {
@@ -796,7 +796,7 @@ def build_default_registry() -> ToolRegistry:
 
     reg.register(Tool(
         name="rag_query",
-        description="Query RAG for relevant documents.",
+        description="MANDATORY FOR CODING: Query RAG for relevant documents. Auto-triggers on: coding tasks, debugging, code search, documentation lookup, implementation questions.",
         input_schema={
             "type": "object",
             "properties": {
