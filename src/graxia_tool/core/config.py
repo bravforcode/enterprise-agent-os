@@ -1,81 +1,73 @@
-"""Enterprise Agent OS — Core Configuration."""
+"""Enterprise Agent OS — Core Configuration (stdlib only, no pydantic)."""
 from __future__ import annotations
-from pydantic_settings import BaseSettings
-from pydantic import Field
+import os
+from dataclasses import dataclass, field
 from typing import Optional
 
 
-class Settings(BaseSettings):
-    """Application settings loaded from environment variables + .env file."""
+def _env(key: str, default: str = "") -> str:
+    return os.getenv(key, default)
+
+
+def _env_int(key: str, default: int = 0) -> int:
+    try:
+        return int(os.getenv(key, str(default)))
+    except (ValueError, TypeError):
+        return default
+
+
+def _env_float(key: str, default: float = 0.0) -> float:
+    try:
+        return float(os.getenv(key, str(default)))
+    except (ValueError, TypeError):
+        return default
+
+
+def _env_bool(key: str, default: bool = False) -> bool:
+    return os.getenv(key, str(default)).lower() in ("1", "true", "yes")
+
+
+@dataclass
+class Settings:
+    """Application settings loaded from environment variables."""
 
     # App
-    app_name: str = "enterprise-agent-os"
-    app_version: str = "0.1.0"
-    debug: bool = False
-    environment: str = "development"  # development, staging, production
+    app_name: str = field(default_factory=lambda: _env("AOS_APP_NAME", "enterprise-agent-os"))
+    app_version: str = field(default_factory=lambda: _env("AOS_APP_VERSION", "0.1.0"))
+    debug: bool = field(default_factory=lambda: _env_bool("AOS_DEBUG", False))
+    environment: str = field(default_factory=lambda: _env("AOS_ENVIRONMENT", "development"))
 
     # API
-    api_host: str = "0.0.0.0"
-    api_port: int = 8000
-    api_workers: int = 1
-    cors_origins: list[str] = ["http://localhost:3000"]
+    api_host: str = field(default_factory=lambda: _env("AOS_API_HOST", "0.0.0.0"))
+    api_port: int = field(default_factory=lambda: _env_int("AOS_API_PORT", 8000))
+    api_workers: int = field(default_factory=lambda: _env_int("AOS_API_WORKERS", 1))
 
-    # Database (PostgreSQL)
-    database_url: str = Field(
-        default="postgresql+asyncpg://agent:agent@localhost:5432/graxia_tool",
-        description="Async PostgreSQL connection string",
-    )
-    database_pool_size: int = 20
-    database_max_overflow: int = 10
+    # Database
+    database_url: str = field(default_factory=lambda: _env("AOS_DATABASE_URL", "sqlite+aiosqlite:///graxia.db"))
 
     # Redis
-    redis_url: str = "redis://localhost:6379/0"
-    redis_ttl_seconds: int = 3600
+    redis_url: str = field(default_factory=lambda: _env("AOS_REDIS_URL", "redis://localhost:6379/0"))
+    redis_ttl_seconds: int = field(default_factory=lambda: _env_int("AOS_REDIS_TTL_SECONDS", 3600))
 
     # Auth
-    jwt_secret: str = Field(default="CHANGE-ME-IN-PRODUCTION", description="JWT signing secret")
-    jwt_algorithm: str = "HS256"
-    jwt_expire_minutes: int = 60
-    api_key_prefix: str = "aos_"
+    jwt_secret: str = field(default_factory=lambda: _env("AOS_JWT_SECRET", "CHANGE-ME-IN-PRODUCTION"))
+    jwt_algorithm: str = field(default_factory=lambda: _env("AOS_JWT_ALGORITHM", "HS256"))
+    jwt_expire_minutes: int = field(default_factory=lambda: _env_int("AOS_JWT_EXPIRE_MINUTES", 60))
 
     # LLM
-    openai_api_key: Optional[str] = None
-    openai_model_router: str = "gpt-4o-mini"  # Intent classification
-    openai_model_main: str = "gpt-4o"  # Main agent
-    openai_model_haiku: str = "claude-3-haiku-20240307"  # Fast/cheap
-    openai_max_tokens: int = 4096
+    openai_api_key: Optional[str] = field(default_factory=lambda: os.getenv("OPENAI_API_KEY"))
+    openai_model_router: str = field(default_factory=lambda: _env("AOS_OPENAI_MODEL_ROUTER", "gpt-4o-mini"))
+    openai_model_main: str = field(default_factory=lambda: _env("AOS_OPENAI_MODEL_MAIN", "gpt-4o"))
+    openai_max_tokens: int = field(default_factory=lambda: _env_int("AOS_OPENAI_MAX_TOKENS", 4096))
 
-    # Qdrant (vector DB for memory)
-    qdrant_url: str = "http://localhost:6333"
-    qdrant_collection: str = "agent_memory"
-
-    # Skill Router
-    skill_router_port: int = 19876
-    skill_router_host: str = "127.0.0.1"
-
-    # Token Budget
-    token_budget_per_turn: int = 50_000
-    token_budget_per_day: int = 1_000_000
-    token_cost_per_1k_input: float = 0.005  # GPT-4o-mini
-    token_cost_per_1k_output: float = 0.015
-
-    # Observability
-    log_level: str = "INFO"
-    sentry_dsn: Optional[str] = None
-    metrics_port: int = 9090
+    # Logging
+    log_level: str = field(default_factory=lambda: _env("AOS_LOG_LEVEL", "INFO"))
 
     # Governance
-    approval_required_tools: list[str] = ["database", "production", "deploy"]
-    max_concurrent_agents: int = 15
-    max_agent_depth: int = 3
+    max_concurrent_agents: int = field(default_factory=lambda: _env_int("AOS_MAX_CONCURRENT_AGENTS", 15))
 
-    model_config = {
-        "env_file": ".env",
-        "env_file_encoding": "utf-8",
-        "env_prefix": "AOS_",
-        "case_sensitive": False,
-        "extra": "ignore",  # Ignore unknown env vars
-    }
+
+settings = Settings()
 
 
 # Singleton

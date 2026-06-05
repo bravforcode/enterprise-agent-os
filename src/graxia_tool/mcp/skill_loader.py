@@ -22,14 +22,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
 
-import yaml
-
 from ..core.logging import get_logger
 
 logger = get_logger("skill_loader")
 
 # Constants
-SKILLS_INDEX_PATH = Path.home() / ".graxia" / "skills-index.yaml"
+SKILLS_INDEX_PATH = Path.home() / ".graxia" / "skills-index.json"
 SESSION_DB_PATH = Path.home() / ".graxia" / "session_memory.db"
 MAX_SKILL_SIZE_BYTES = 100_000  # 100KB limit per skill file
 INJECTION_PATTERNS = [
@@ -275,7 +273,7 @@ class SkillIndex:
         """Load skill metadata from YAML index file."""
         try:
             text = self.index_path.read_text(encoding="utf-8")
-            data = yaml.safe_load(text)
+            data = json.loads(text)
             if not data or not isinstance(data, list):
                 logger.warning("empty_or_invalid_index", path=str(self.index_path))
                 return
@@ -385,7 +383,7 @@ class SkillIndex:
         """Save current index to YAML file."""
         data = [meta.to_dict() for meta in self._skills.values()]
         self.index_path.write_text(
-            yaml.dump(data, default_flow_style=False, sort_keys=False),
+            json.dumps(data, indent=2, ensure_ascii=False),
             encoding="utf-8",
         )
 

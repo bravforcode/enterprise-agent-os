@@ -24,7 +24,7 @@ logger = logging.getLogger("graxia_tool.mcp.fast_path")
 
 GRAXIA_DIR = Path.home() / ".graxia"
 CACHE_DIR = GRAXIA_DIR / "cache"
-SKILLS_INDEX_YAML = GRAXIA_DIR / "skills-index.yaml"
+SKILLS_INDEX_YAML = GRAXIA_DIR / "skills-index.json"
 SKILLS_INDEX_PICKLE = CACHE_DIR / "skills-index.pkl"
 SESSION_DB = GRAXIA_DIR / "session_memory.db"
 
@@ -141,12 +141,12 @@ class SkillIndexCache:
                 except Exception:
                     pass
 
-            # Fall back to YAML
+            # Fall back to JSON
             if SKILLS_INDEX_YAML.exists():
                 try:
-                    import yaml
+                    import json as _json
                     with open(SKILLS_INDEX_YAML, encoding="utf-8") as f:
-                        self._skills = yaml.safe_load(f) or []
+                        self._skills = _json.loads(f.read()) or []
                     # Save pickle cache
                     CACHE_DIR.mkdir(parents=True, exist_ok=True)
                     with open(SKILLS_INDEX_PICKLE, "wb") as f:

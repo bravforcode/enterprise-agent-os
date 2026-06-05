@@ -14,15 +14,16 @@ Usage:
 from __future__ import annotations
 
 import asyncio
+import json as _json
 import os
 import platform
 import shutil
 import subprocess
 import time
+import urllib.request
+import urllib.error
 from pathlib import Path
 from typing import Optional
-
-import httpx
 
 
 DEFAULT_MODEL = "llama3.2:1b"
@@ -48,12 +49,14 @@ def get_ollama_install_url() -> str:
 
 async def is_ollama_running(base_url: str = OLLAMA_URL) -> bool:
     """Check if Ollama server is running."""
-    try:
-        async with httpx.AsyncClient(timeout=2.0) as client:
-            resp = await client.get(f"{base_url}/api/tags")
-            return resp.status_code == 200
-    except Exception:
-        return False
+    def _check():
+        try:
+            req = urllib.request.Request(f"{base_url}/api/tags")
+            resp = urllib.request.urlopen(req, timeout=2)
+            return resp.status == 200
+        except Exception:
+            return False
+    return await asyncio.to_thread(_check)
 
 
 async def wait_for_ollama(timeout_seconds: int = 30, base_url: str = OLLAMA_URL) -> bool:
@@ -68,14 +71,15 @@ async def wait_for_ollama(timeout_seconds: int = 30, base_url: str = OLLAMA_URL)
 
 async def list_models(base_url: str = OLLAMA_URL) -> list[str]:
     """List available Ollama models."""
-    try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            resp = await client.get(f"{base_url}/api/tags")
-            resp.raise_for_status()
-            data = resp.json()
+    def _list():
+        try:
+            req = urllib.request.Request(f"{base_url}/api/tags")
+            resp = urllib.request.urlopen(req, timeout=5)
+            data = _json.loads(resp.read())
             return [m["name"] for m in data.get("models", [])]
-    except Exception:
-        return []
+        except Exception:
+            return []
+    return await asyncio.to_thread(_list)
 
 
 async def has_model(model: str, base_url: str = OLLAMA_URL) -> bool:
@@ -94,20 +98,24 @@ async def pull_model(model: str, base_url: str = OLLAMA_URL, timeout: int = 600)
     if await has_model(model, base_url):
         return True
 
-    # Try via API (stream)
-    try:
-        async with httpx.AsyncClient(timeout=float(timeout)) as client:
-            async with client.stream(
-                "POST",
+    # Try via API (non-streaming with long timeout)
+    def _pull():
+        try:
+            data = _json.dumps({"name": model, "stream": False}).encode()
+            req = urllib.request.Request(
                 f"{base_url}/api/pull",
-                json={"name": model, "stream": True},
-            ) as resp:
-                resp.raise_for_status()
-                async for _ in resp.aiter_lines():
-                    pass
+                data=data,
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            resp = urllib.request.urlopen(req, timeout=timeout)
+            return resp.status == 200
+        except Exception:
+            return False
+
+    api_ok = await asyncio.to_thread(_pull)
+    if api_ok:
         return await has_model(model, base_url)
-    except Exception:
-        pass
 
     # Fallback: use ollama CLI
     if is_ollama_installed():

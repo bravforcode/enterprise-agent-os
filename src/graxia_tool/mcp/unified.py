@@ -196,8 +196,15 @@ async def _guard_handler(args: Dict[str, Any]) -> Dict[str, Any]:
 
 async def _data_handler(args: Dict[str, Any]) -> Dict[str, Any]:
     """Data: Generate synthetic data."""
-    from . import _graxia_data
-    return await _graxia_data(args)
+    from .faker_tools import faker_generate, faker_locales, faker_schema
+    action = args.get("action", "generate")
+    if action == "generate":
+        return await faker_generate(args)
+    elif action == "locales":
+        return await faker_locales(args)
+    elif action == "schema":
+        return await faker_schema(args)
+    return {"content": [{"type": "text", "text": f"Unknown data action: {action}. Use: generate|locales|schema"}], "isError": True}
 
 
 async def _sys_handler(args: Dict[str, Any]) -> Dict[str, Any]:

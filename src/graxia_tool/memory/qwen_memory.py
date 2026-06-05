@@ -15,10 +15,10 @@ from __future__ import annotations
 
 import json
 import time
+import urllib.request
+import urllib.error
 from dataclasses import dataclass
 from typing import Optional
-
-import httpx
 
 
 # ── Config ──────────────────────────────────────────────────────────────
@@ -39,26 +39,29 @@ class QwenClient:
     def _generate(self, prompt: str, max_tokens: int = 200) -> str:
         """Call Ollama API with think=false."""
         try:
-            r = httpx.post(
+            data = json.dumps({
+                "model": self.model,
+                "prompt": prompt,
+                "stream": False,
+                "think": False,
+                "options": {"num_predict": max_tokens},
+            }).encode()
+            req = urllib.request.Request(
                 f"{self.base_url}/api/generate",
-                json={
-                    "model": self.model,
-                    "prompt": prompt,
-                    "stream": False,
-                    "think": False,
-                    "options": {"num_predict": max_tokens},
-                },
-                timeout=60,
+                data=data,
+                headers={"Content-Type": "application/json"},
             )
-            return r.json().get("response", "").strip()
+            resp = urllib.request.urlopen(req, timeout=60)
+            return json.loads(resp.read()).get("response", "").strip()
         except Exception:
             return ""
 
     def is_available(self) -> bool:
         """Check if Ollama + model is running."""
         try:
-            r = httpx.get(f"{self.base_url}/api/tags", timeout=5)
-            models = [m["name"] for m in r.json().get("models", [])]
+            req = urllib.request.Request(f"{self.base_url}/api/tags")
+            resp = urllib.request.urlopen(req, timeout=5)
+            models = [m["name"] for m in json.loads(resp.read()).get("models", [])]
             return any(self.model in m for m in models)
         except Exception:
             return False

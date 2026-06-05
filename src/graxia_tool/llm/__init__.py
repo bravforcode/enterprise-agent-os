@@ -16,13 +16,116 @@ Default priority (no env vars set):
 from __future__ import annotations
 
 import asyncio
+import json as _json
 import os
 import time
+import urllib.request
+import urllib.error
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any, Optional
 
-import httpx
+
+# ── Stdlib HTTP client (replaces httpx) ──────────────────────────────────
+
+class _StdlibHTTPError(Exception):
+    """Base HTTP error."""
+    pass
+
+
+class _ConnectError(_StdlibHTTPError):
+    """Connection failed."""
+    pass
+
+
+class _TimeoutError(_StdlibHTTPError):
+    """Request timed out."""
+    pass
+
+
+class _HTTPStatusError(_StdlibHTTPError):
+    """HTTP status >= 400."""
+    def __init__(self, message: str, status_code: int, text: str):
+        super().__init__(message)
+        self.status_code = status_code
+        self.text = text
+        self.response = self  # self-reference for `e.response.status_code`
+
+
+class _StdlibResponse:
+    """Minimal response object mimicking httpx.Response."""
+    def __init__(self, status_code: int, data: bytes):
+        self.status_code = status_code
+        self._data = data
+        self.text = data.decode("utf-8", errors="replace")
+
+    def json(self):
+        return _json.loads(self._data)
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise _HTTPStatusError(
+                f"HTTP {self.status_code}",
+                self.status_code,
+                self.text[:500],
+            )
+
+
+class _StdlibAsyncClient:
+    """Async HTTP client using urllib (stdlib only, no httpx needed)."""
+
+    def __init__(self, base_url: str = "", headers: dict | None = None, timeout: float = 60.0):
+        self._base_url = base_url.rstrip("/")
+        self._headers = headers or {}
+        self._timeout = timeout
+
+    def _url(self, path: str) -> str:
+        if path.startswith("http"):
+            return path
+        return f"{self._base_url}{path}"
+
+    async def get(self, path: str, timeout: float | None = None) -> _StdlibResponse:
+        return await self._request("GET", path, timeout=timeout or self._timeout)
+
+    async def post(self, path: str, json: dict | None = None, timeout: float | None = None) -> _StdlibResponse:
+        return await self._request("POST", path, json_data=json, timeout=timeout or self._timeout)
+
+    async def _request(self, method: str, path: str, json_data: dict | None = None, timeout: float = 60.0) -> _StdlibResponse:
+        url = self._url(path)
+        headers = dict(self._headers)
+        data = None
+        if json_data is not None:
+            data = _json.dumps(json_data, default=str).encode("utf-8")
+            headers.setdefault("Content-Type", "application/json")
+
+        req = urllib.request.Request(url, data=data, headers=headers, method=method)
+
+        def _sync():
+            try:
+                resp = urllib.request.urlopen(req, timeout=timeout)
+                return _StdlibResponse(resp.status, resp.read())
+            except urllib.error.HTTPError as e:
+                body = e.read() if hasattr(e, "read") else b""
+                return _StdlibResponse(e.code, body)
+            except urllib.error.URLError as e:
+                raise _ConnectError(f"Connection failed: {e.reason}")
+            except TimeoutError:
+                raise _TimeoutError(f"Request timed out after {timeout}s")
+
+        return await asyncio.to_thread(_sync)
+
+    async def aclose(self):
+        pass  # urllib has no persistent connections
+
+
+# Alias for compatibility with httpx-style code
+httpx = type("httpx", (), {
+    "AsyncClient": _StdlibAsyncClient,
+    "HTTPStatusError": _HTTPStatusError,
+    "ConnectError": _ConnectError,
+    "TimeoutException": _TimeoutError,
+    "TimeoutError": _TimeoutError,
+})()
 
 
 # Cost per 1K tokens (input, output) — 0 for local models
