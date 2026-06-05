@@ -20,6 +20,7 @@ import os
 import sys
 import threading
 import time
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 logger = logging.getLogger("graxia_tool.mcp.daemon")
@@ -40,8 +41,11 @@ class DaemonMCPServer(MCPServer):
 
     def __init__(self):
         super().__init__()
-        # Pre-warm caches
+        self._memory = None
+        self._file_watcher = None
         self._warm_caches()
+        self._init_memory()
+        self._start_file_watcher()
 
     def _warm_caches(self):
         """Pre-load all caches at startup."""
@@ -69,6 +73,73 @@ class DaemonMCPServer(MCPServer):
 
         warm_time = time.time() - start
         logger.info("daemon_caches_warmed warm_ms=%d", int(warm_time * 1000))
+
+    def _init_memory(self):
+        """Initialize cross-session memory manager."""
+        from ..control_plane.memory import MemoryManager
+        import os
+        from pathlib import Path
+
+        db_dir = Path.home() / ".graxia" / "tool"
+        db_dir.mkdir(parents=True, exist_ok=True)
+        db_path = str(db_dir / "memory.db")
+
+        self._memory = MemoryManager(db_path=db_path)
+        logger.info("daemon_memory_initialized db=%s", db_path)
+
+        # Start auto-persist (every 5 min)
+        self._memory.auto_persist(interval=300)
+        logger.info("daemon_auto_persist_started interval=300s")
+
+    def _start_file_watcher(self):
+        """Start file watcher for vault, code, config."""
+        from ..control_plane.watcher import FileWatcher
+        import os
+
+        vault_path = os.environ.get("AGENT_OS_VAULT_PATH")
+        code_path = str(Path(__file__).parent.parent)
+        config_paths = []
+
+        # Find config files
+        claude_dir = Path.home() / ".claude"
+        if claude_dir.exists():
+            for name in [".mcp.json", "CLAUDE.md"]:
+                p = claude_dir / name
+                if p.exists():
+                    config_paths.append(str(p))
+
+        rules_path = Path(__file__).parent.parent.parent / "AGENT_RULES.md"
+        if rules_path.exists():
+            config_paths.append(str(rules_path))
+
+        self._file_watcher = FileWatcher(
+            vault_path=vault_path,
+            code_path=code_path,
+            config_paths=config_paths,
+            on_vault_change=self._on_vault_change,
+            on_code_change=self._on_code_change,
+            on_config_change=self._on_config_change,
+        )
+        self._file_watcher.start()
+        logger.info("daemon_file_watcher_started vault=%s code=%s configs=%d",
+                     vault_path, code_path, len(config_paths))
+
+    def _on_vault_change(self, paths: list):
+        """Handle vault file changes — store event in memory."""
+        if self._memory:
+            self._memory.store(
+                content=f"vault_changed: {len(paths)} files",
+                tier="longterm",
+                key="vault_sync",
+            )
+
+    def _on_code_change(self, paths: list):
+        """Handle code file changes — invalidate cache."""
+        logger.info("code_changed count=%d", len(paths))
+
+    def _on_config_change(self, paths: list):
+        """Handle config file changes — log event."""
+        logger.info("config_changed paths=%s", paths)
 
     async def handle_request(self, req: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Handle request with fast-path optimization."""
@@ -102,6 +173,12 @@ class DaemonMCPServer(MCPServer):
             tool_name = params.get("name", "")
             arguments = params.get("arguments", {}) or {}
 
+            # Memory tools — use shared MemoryManager
+            if tool_name == "memory_store" and self._memory:
+                return self._handle_memory_store(req_id, arguments)
+            if tool_name == "memory_recall" and self._memory:
+                return self._handle_memory_recall(req_id, arguments)
+
             # Fast path: try cached dispatch
             cached = fast_dispatch(tool_name, arguments)
             if cached is not None:
@@ -119,6 +196,27 @@ class DaemonMCPServer(MCPServer):
                 return make_error(req_id, -32603, f"Tool error: {e}")
 
         return make_error(req_id, -32601, f"Method not found: {method}")
+
+    def _handle_memory_store(self, req_id, args):
+        try:
+            tier = args.get("tier", "working")
+            content = args.get("content", "")
+            key = args.get("key")
+            memory_id = self._memory.store(content, tier=tier, key=key)
+            return make_result(req_id, {"id": memory_id, "tier": tier, "stored": True})
+        except Exception as e:
+            return make_error(req_id, -32603, f"memory_store error: {e}")
+
+    def _handle_memory_recall(self, req_id, args):
+        try:
+            query = args.get("query")
+            key = args.get("key")
+            tier = args.get("tier")
+            limit = args.get("limit", 10)
+            results = self._memory.recall(query=query, key=key, tier=tier, limit=limit)
+            return make_result(req_id, {"results": results, "count": len(results)})
+        except Exception as e:
+            return make_error(req_id, -32603, f"memory_recall error: {e}")
 
 
 def main():
