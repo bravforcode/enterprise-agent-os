@@ -83,73 +83,59 @@ class FileWatcher:
                 pass
         return mtimes
 
-    def _detect_changes(self) -> dict[str, list[str]]:
-        """Detect changed files since last scan. Returns {category: [paths]}."""
-        changes: dict[str, list[str]] = {
-            "vault": [],
-            "code": [],
-            "config": [],
-        }
-
-        with self._lock:
-            # Vault changes
-            if self._vault_path and self._on_vault_change:
-                new_mtimes = self._scan_mtimes(self._vault_path, ext=".md")
-                for path, mtime in new_mtimes.items():
-                    old = self._mtimes.get(path, 0)
-                    if mtime > old:
-                        changes["vault"].append(path)
-                self._mtimes.update(new_mtimes)
-
-            # Code changes
-            if self._code_path and self._on_code_change:
-                new_mtimes = self._scan_mtimes(self._code_path, ext=".py")
-                for path, mtime in new_mtimes.items():
-                    old = self._mtimes.get(path, 0)
-                    if mtime > old:
-                        changes["code"].append(path)
-                self._mtimes.update(new_mtimes)
-
-            # Config changes
-            if self._config_paths and self._on_config_change:
-                new_mtimes = self._scan_single_files(self._config_paths)
-                for path, mtime in new_mtimes.items():
-                    old = self._mtimes.get(path, 0)
-                    if mtime > old:
-                        changes["config"].append(path)
-                self._mtimes.update(new_mtimes)
-
-        return changes
+    def _categorize(self, path: str) -> str:
+        """Determine category of a file path."""
+        if self._vault_path and path.startswith(self._vault_path):
+            return "vault"
+        if self._code_path and path.startswith(self._code_path):
+            return "code"
+        return "config"
 
     def _poll_loop(self) -> None:
-        """Main polling loop."""
+        """Main polling loop with proper debounce."""
         while self._running:
             try:
-                changes = self._detect_changes()
                 now = time.time()
 
-                for category, paths in changes.items():
-                    if not paths:
-                        continue
-                    for path in paths:
-                        first_seen = self._pending.get(path, now)
-                        if now - first_seen >= self.DEBOUNCE_WINDOW:
-                            # Debounce passed, trigger callback
-                            self._pending.pop(path, None)
-                            callback = {
-                                "vault": self._on_vault_change,
-                                "code": self._on_code_change,
-                                "config": self._on_config_change,
-                            }.get(category)
-                            if callback:
-                                logger.info("file_changed category=%s path=%s", category, path)
-                                try:
-                                    callback(paths)
-                                except Exception as e:
-                                    logger.warning("callback_failed category=%s error=%s", category, e)
-                        else:
-                            # Still in debounce window
-                            self._pending[path] = first_seen
+                # Scan all files
+                all_mtimes = {}
+                if self._vault_path and self._on_vault_change:
+                    all_mtimes.update(self._scan_mtimes(self._vault_path, ext=".md"))
+                if self._code_path and self._on_code_change:
+                    all_mtimes.update(self._scan_mtimes(self._code_path, ext=".py"))
+                if self._config_paths and self._on_config_change:
+                    all_mtimes.update(self._scan_single_files(self._config_paths))
+
+                with self._lock:
+                    # Detect NEW changes
+                    for path, mtime in all_mtimes.items():
+                        old = self._mtimes.get(path, 0)
+                        if mtime > old and path not in self._pending:
+                            self._pending[path] = now
+
+                    self._mtimes.update(all_mtimes)
+
+                # Check pending files for debounce completion
+                ready = []
+                for path, first_seen in list(self._pending.items()):
+                    if now - first_seen >= self.DEBOUNCE_WINDOW:
+                        ready.append(path)
+                        del self._pending[path]
+
+                # Trigger callbacks for ready files
+                for path in ready:
+                    category = self._categorize(path)
+                    callback = {
+                        "vault": self._on_vault_change,
+                        "code": self._on_code_change,
+                        "config": self._on_config_change,
+                    }.get(category)
+                    if callback:
+                        logger.info("file_changed category=%s path=%s", category, path)
+                        try:
+                            callback([path])
+                        except Exception as e:
+                            logger.warning("callback_failed category=%s error=%s", category, e)
 
             except Exception as e:
                 logger.warning("poll_error error=%s", e)
