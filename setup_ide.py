@@ -22,7 +22,7 @@ from typing import Any
 # ── Config ──────────────────────────────────────────────────────────────
 
 PYTHON_EXE = sys.executable
-PROJECT_ROOT = Path(__file__).parent
+PROJECT_ROOT = Path(os.environ.get("AGENT_OS_ROOT", r"C:\Users\menum\enterprise-agent-os"))
 SRC_DIR = PROJECT_ROOT / "src"
 VAULT_PATH = r"C:\Users\menum\Documents\ObsidianVault\Second Brain"
 

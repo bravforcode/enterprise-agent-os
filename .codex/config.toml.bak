@@ -1,6 +1,4 @@
 
-
-
 [mcp_servers.graxia]
 command = "C:\Users\menum\AppData\Local\Programs\Python\Python312\python.exe"
 args = ["-m", "graxia_tool.mcp"]
