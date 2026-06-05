@@ -29,7 +29,7 @@ logger = logging.getLogger("graxia_tool.mcp.daemon")
 logger.info("daemon_importing_modules")
 _start = time.time()
 
-from . import MCPServer, build_default_registry
+from . import MCPServer, Tool, build_default_registry
 from .fast_path import fast_dispatch, get_skill_cache, get_pool
 
 _import_time = time.time() - _start
@@ -46,6 +46,7 @@ class DaemonMCPServer(MCPServer):
         self._warm_caches()
         self._init_memory()
         self._start_file_watcher()
+        self._register_memory_tools()
 
     def _warm_caches(self):
         """Pre-load all caches at startup."""
@@ -77,8 +78,6 @@ class DaemonMCPServer(MCPServer):
     def _init_memory(self):
         """Initialize cross-session memory manager."""
         from ..control_plane.memory import MemoryManager
-        import os
-        from pathlib import Path
 
         db_dir = Path.home() / ".graxia" / "tool"
         db_dir.mkdir(parents=True, exist_ok=True)
@@ -94,7 +93,6 @@ class DaemonMCPServer(MCPServer):
     def _start_file_watcher(self):
         """Start file watcher for vault, code, config."""
         from ..control_plane.watcher import FileWatcher
-        import os
 
         vault_path = os.environ.get("AGENT_OS_VAULT_PATH")
         code_path = str(Path(__file__).parent.parent)
@@ -130,7 +128,7 @@ class DaemonMCPServer(MCPServer):
             self._memory.store(
                 content=f"vault_changed: {len(paths)} files",
                 tier="longterm",
-                key="vault_sync",
+                key=f"vault_sync_{int(time.time())}",
             )
 
     def _on_code_change(self, paths: list):
@@ -140,6 +138,47 @@ class DaemonMCPServer(MCPServer):
     def _on_config_change(self, paths: list):
         """Handle config file changes — log event."""
         logger.info("config_changed paths=%s", paths)
+
+    def _register_memory_tools(self):
+        """Register memory tools in the tool registry so they appear in tools/list."""
+        self.registry.register(Tool(
+            name="memory_store",
+            description="Store a memory in the cross-session memory manager.",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "content": {"type": "string", "description": "Content to store"},
+                    "tier": {"type": "string", "enum": ["session", "working", "longterm", "project"], "default": "working"},
+                    "key": {"type": "string", "description": "Optional key for retrieval"},
+                },
+                "required": ["content"],
+            },
+            handler=lambda args: self._handle_memory_store(None, args),
+            category="memory",
+        ))
+        self.registry.register(Tool(
+            name="memory_recall",
+            description="Recall memories from the cross-session memory manager.",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Search query"},
+                    "key": {"type": "string", "description": "Exact key match"},
+                    "tier": {"type": "string", "enum": ["session", "working", "longterm", "project"]},
+                    "limit": {"type": "integer", "default": 10},
+                },
+            },
+            handler=lambda args: self._handle_memory_recall(None, args),
+            category="memory",
+        ))
+
+    def close(self):
+        """Shut down daemon resources."""
+        if self._memory:
+            self._memory.stop_persist()
+        if self._file_watcher:
+            self._file_watcher.stop()
+        logger.info("daemon_closed")
 
     async def handle_request(self, req: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Handle request with fast-path optimization."""
@@ -209,9 +248,11 @@ class DaemonMCPServer(MCPServer):
 
     def _handle_memory_recall(self, req_id, args):
         try:
+            from ..control_plane.memory import MemoryTier
+
             query = args.get("query")
             key = args.get("key")
-            tier = args.get("tier")
+            tier = MemoryTier(args["tier"]) if args.get("tier") else None
             limit = args.get("limit", 10)
             results = self._memory.recall(query=query, key=key, tier=tier, limit=limit)
             return make_result(req_id, {"results": results, "count": len(results)})
