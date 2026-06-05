@@ -5,13 +5,13 @@ Polling-based (os.scandir + mtime) — no external deps.
 """
 from __future__ import annotations
 
+import logging
 import os
 import time
 import threading
-from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Callable, Optional
 
-logger = __import__("logging").getLogger(__name__)
+logger = logging.getLogger(__name__)
 
 
 class FileWatcher:
@@ -52,7 +52,7 @@ class FileWatcher:
 
         self._mtimes: dict[str, float] = {}
         self._pending: dict[str, float] = {}  # file -> first change time
-        self._running = False
+        self._running = threading.Event()
         self._thread: Optional[threading.Thread] = None
         self._lock = threading.Lock()
 
@@ -66,11 +66,11 @@ class FileWatcher:
                         try:
                             mtimes[entry.path] = entry.stat().st_mtime
                         except OSError:
-                            pass
+                            logger.debug("scan_stat_failed path=%s", entry.path)
                 elif entry.is_dir(follow_symlinks=False) and not entry.name.startswith("."):
                     mtimes.update(self._scan_mtimes(entry.path, ext))
         except OSError:
-            pass
+            logger.debug("scan_dir_failed root=%s", root)
         return mtimes
 
     def _scan_single_files(self, paths: list[str]) -> dict[str, float]:
@@ -80,20 +80,28 @@ class FileWatcher:
             try:
                 mtimes[p] = os.stat(p).st_mtime
             except OSError:
-                pass
+                logger.debug("scan_single_stat_failed path=%s", p)
         return mtimes
 
     def _categorize(self, path: str) -> str:
-        """Determine category of a file path."""
+        """Determine category of a file path.
+
+        Matches the most specific (longest) prefix first to avoid
+        ambiguous matches when paths overlap.
+        """
+        candidates: list[tuple[int, str]] = []
         if self._vault_path and path.startswith(self._vault_path):
-            return "vault"
+            candidates.append((len(self._vault_path), "vault"))
         if self._code_path and path.startswith(self._code_path):
-            return "code"
+            candidates.append((len(self._code_path), "code"))
+        if candidates:
+            candidates.sort(key=lambda c: c[0], reverse=True)
+            return candidates[0][1]
         return "config"
 
     def _poll_loop(self) -> None:
         """Main polling loop with proper debounce."""
-        while self._running:
+        while self._running.is_set():
             try:
                 now = time.time()
 
@@ -106,6 +114,7 @@ class FileWatcher:
                 if self._config_paths and self._on_config_change:
                     all_mtimes.update(self._scan_single_files(self._config_paths))
 
+                ready: list[str] = []
                 with self._lock:
                     # Detect NEW changes
                     for path, mtime in all_mtimes.items():
@@ -115,12 +124,12 @@ class FileWatcher:
 
                     self._mtimes.update(all_mtimes)
 
-                # Check pending files for debounce completion
-                ready = []
-                for path, first_seen in list(self._pending.items()):
-                    if now - first_seen >= self.DEBOUNCE_WINDOW:
-                        ready.append(path)
-                        del self._pending[path]
+                    # Check pending files for debounce completion (inside lock)
+                    for path in list(self._pending):
+                        first_seen = self._pending[path]
+                        if now - first_seen >= self.DEBOUNCE_WINDOW:
+                            ready.append(path)
+                            del self._pending[path]
 
                 # Trigger callbacks for ready files
                 for path in ready:
@@ -144,9 +153,10 @@ class FileWatcher:
 
     def start(self) -> None:
         """Start the file watcher in a background thread."""
-        if self._running:
-            return
-        self._running = True
+        with self._lock:
+            if self._running.is_set():
+                return
+            self._running.set()
         self._thread = threading.Thread(target=self._poll_loop, daemon=True, name="file-watcher")
         self._thread.start()
         logger.info("file_watcher_started vault=%s code=%s configs=%d",
@@ -154,7 +164,7 @@ class FileWatcher:
 
     def stop(self) -> None:
         """Stop the file watcher."""
-        self._running = False
+        self._running.clear()
         if self._thread:
             self._thread.join(timeout=2)
             self._thread = None
