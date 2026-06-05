@@ -477,7 +477,10 @@ async def _vault_write(args: Dict[str, Any]) -> Dict[str, Any]:
 # ----------------------------------------------------------------------------
 
 async def _auto_route(args: Dict[str, Any]) -> Dict[str, Any]:
-    """Auto-route a prompt: returns skills, RAG technique, agent, model tier, MCP tools."""
+    """Auto-route a prompt: returns skills, RAG technique, agent, model tier, MCP tools.
+    
+    Also auto-loads top skills and returns their content.
+    """
     from ..auto_router import AutoRouter
 
     prompt = args.get("prompt", "")
@@ -487,7 +490,28 @@ async def _auto_route(args: Dict[str, Any]) -> Dict[str, Any]:
     try:
         router = AutoRouter()
         decision = router.route(prompt)
-        return _ok(decision.to_dict())
+        result = decision.to_dict()
+
+        # Auto-load top skills (max 3)
+        skills = result.get("skills", [])
+        if skills:
+            from .skill_loader import get_skill_index
+            index = await get_skill_index()
+            loaded = []
+            for skill_name in skills[:3]:
+                try:
+                    content = await index.load_full(skill_name)
+                    if content:
+                        loaded.append({
+                            "name": content.metadata.name,
+                            "content": content.content[:2000],  # Truncate for context
+                            "tokens": content.tokens_estimate,
+                        })
+                except Exception:
+                    pass
+            result["skills_loaded"] = loaded
+
+        return _ok(result)
     except Exception as e:
         logger.exception("auto_route failed")
         return _err(f"{type(e).__name__}: {e}")

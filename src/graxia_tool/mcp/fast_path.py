@@ -20,6 +20,75 @@ from typing import Any, Dict, Optional
 
 logger = logging.getLogger("graxia_tool.mcp.fast_path")
 
+# ── Tool Result Cache (TTL-based) ─────────────────────────────────────
+
+class ToolResultCache:
+    """TTL-based cache for tool call results. Avoids redundant calls."""
+
+    def __init__(self, default_ttl: int = 300):
+        self._cache: Dict[str, tuple[float, Any]] = {}
+        self._lock = threading.Lock()
+        self._default_ttl = default_ttl
+        self._hits = 0
+        self._misses = 0
+
+    def _make_key(self, tool_name: str, args: dict) -> str:
+        """Create cache key from tool name + sorted args."""
+        args_str = json.dumps(args, sort_keys=True, default=str)
+        return f"{tool_name}:{args_str}"
+
+    def get(self, tool_name: str, args: dict) -> Optional[Any]:
+        """Get cached result if exists and not expired."""
+        key = self._make_key(tool_name, args)
+        with self._lock:
+            if key in self._cache:
+                expires, value = self._cache[key]
+                if time.time() < expires:
+                    self._hits += 1
+                    return value
+                else:
+                    del self._cache[key]
+            self._misses += 1
+        return None
+
+    def set(self, tool_name: str, args: dict, value: Any, ttl: Optional[int] = None) -> None:
+        """Store result with TTL."""
+        key = self._make_key(tool_name, args)
+        expires = time.time() + (ttl or self._default_ttl)
+        with self._lock:
+            self._cache[key] = (expires, value)
+
+    def stats(self) -> dict:
+        """Return cache statistics."""
+        with self._lock:
+            total = self._hits + self._misses
+            return {
+                "entries": len(self._cache),
+                "hits": self._hits,
+                "misses": self._misses,
+                "hit_rate": f"{self._hits/total*100:.1f}%" if total > 0 else "0%",
+            }
+
+    def clear(self) -> int:
+        """Clear expired entries. Returns count cleared."""
+        now = time.time()
+        cleared = 0
+        with self._lock:
+            expired = [k for k, (exp, _) in self._cache.items() if exp < now]
+            for k in expired:
+                del self._cache[k]
+                cleared += 1
+        return cleared
+
+
+# Global tool cache
+_tool_cache = ToolResultCache(default_ttl=300)
+
+
+def get_tool_cache() -> ToolResultCache:
+    return _tool_cache
+
+
 # ── Config ──────────────────────────────────────────────────────────────
 
 GRAXIA_DIR = Path.home() / ".graxia"
@@ -243,17 +312,24 @@ def _build_static_responses() -> None:
 
 def fast_dispatch(tool_name: str, args: dict) -> Optional[dict]:
     """Try to handle tool call without heavy imports. Returns None if not cached."""
+    # Check tool result cache first
+    cached = _tool_cache.get(tool_name, args)
+    if cached is not None:
+        return cached
+
     if not STATIC_RESPONSES:
         _build_static_responses()
 
     if tool_name in STATIC_RESPONSES:
-        return STATIC_RESPONSES[tool_name]
+        result = STATIC_RESPONSES[tool_name]
+        _tool_cache.set(tool_name, args, result, ttl=60)
+        return result
 
     # Fast skill search (no YAML parse)
     if tool_name == "skill_search":
         cache = get_skill_cache()
         results = cache.search(args.get("query", ""), args.get("top_k", 5))
-        return {
+        result = {
             "content": [{"type": "text", "text": json.dumps({
                 "results": [{
                     "name": s.get("name", ""),
@@ -265,6 +341,8 @@ def fast_dispatch(tool_name: str, args: dict) -> Optional[dict]:
                 "total": len(results),
             })}]
         }
+        _tool_cache.set(tool_name, args, result, ttl=600)
+        return result
 
     return None
 
