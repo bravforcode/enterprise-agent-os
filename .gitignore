@@ -14,3 +14,4 @@ alembic/versions/*.pyc
 docker/data/
 .pytest-tmp/
 .external-repos/
+lancedb/
