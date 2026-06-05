@@ -9,6 +9,7 @@ Provides SQLite + FTS5 storage with four memory tiers:
 
 import hashlib
 import json
+import logging
 import sqlite3
 import time
 import threading
@@ -16,6 +17,8 @@ import uuid
 from enum import Enum
 from pathlib import Path
 from typing import Any, Optional
+
+logger = logging.getLogger(__name__)
 
 
 class MemoryTier(str, Enum):
@@ -275,6 +278,7 @@ class MemoryManager:
         }
 
     def close(self) -> None:
+        self.stop_persist()
         self._conn.close()
 
     def auto_persist(self, interval: int = 300) -> threading.Thread:
@@ -282,26 +286,35 @@ class MemoryManager:
 
         Returns the thread (daemon=True, auto-dies with parent).
         """
-        import threading
+        self._stop_event = threading.Event()
 
         def _persist_loop():
-            while True:
-                time.sleep(interval)
+            while not self._stop_event.is_set():
                 try:
                     self._snapshot_working_to_longterm()
                 except Exception:
-                    pass
+                    logger.exception("Failed to snapshot working → longterm")
+                self._stop_event.wait(interval)
 
         t = threading.Thread(target=_persist_loop, daemon=True, name="memory-auto-persist")
         t.start()
         return t
 
-    def _snapshot_working_to_longterm(self) -> int:
-        """Copy expired working entries to longterm tier."""
+    def stop_persist(self) -> None:
+        """Signal the auto-persist background thread to stop."""
+        if hasattr(self, "_stop_event"):
+            self._stop_event.set()
+
+    def _snapshot_working_to_longterm(self, buffer_seconds: int = 3600) -> int:
+        """Copy near-expiry working entries to longterm tier.
+
+        Selects entries expiring within `buffer_seconds` from now to avoid
+        a race condition with clear_expired().
+        """
         now = self._now()
         rows = self._conn.execute(
             "SELECT * FROM memories WHERE tier = 'working' AND expires_at IS NOT NULL AND expires_at < ?",
-            (now,),
+            (now + buffer_seconds,),
         ).fetchall()
         count = 0
         for row in rows:
