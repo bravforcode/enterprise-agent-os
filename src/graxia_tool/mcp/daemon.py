@@ -29,7 +29,7 @@ logger = logging.getLogger("graxia_tool.mcp.daemon")
 logger.info("daemon_importing_modules")
 _start = time.time()
 
-from . import MCPServer, Tool, build_default_registry
+from . import MCPServer, Tool, build_default_registry, make_result, make_error
 from .fast_path import fast_dispatch, get_skill_cache, get_pool
 
 _import_time = time.time() - _start

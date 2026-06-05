@@ -1,6 +1,6 @@
 """Pipeline orchestration — re-exports from top-level pipeline (lazy)."""
 try:
-    from ..pipeline import Pipeline
+    from ..pipeline import EndToEndPipeline as Pipeline
 except (ImportError, AttributeError):
-    Pipeline = None  # lazy — will fail at call time if database_pool_size missing
+    Pipeline = None
 __all__ = ["Pipeline"]

@@ -236,18 +236,16 @@ class SkillIndex:
         # Load or build index
         if self.index_path.exists():
             await self._load_index_yaml()
-        else:
+
+        # Always rebuild from dirs if index is empty
+        if not self._skills:
             await self._build_index_from_dirs()
 
         # Cache to SQLite
         await self._sync_to_db()
 
         self._initialized = True
-        logger.info(
-            "skill_index_initialized",
-            skill_count=len(self._skills),
-            index_path=str(self.index_path),
-        )
+        logger.info("skill_index_initialized count=%d path=%s", len(self._skills), self.index_path)
 
     def _init_db(self) -> None:
         """Create SQLite table for skill metadata cache."""
@@ -275,7 +273,7 @@ class SkillIndex:
             text = self.index_path.read_text(encoding="utf-8")
             data = json.loads(text)
             if not data or not isinstance(data, list):
-                logger.warning("empty_or_invalid_index", path=str(self.index_path))
+                logger.warning("empty_or_invalid_index path=%s", self.index_path)
                 return
 
             for entry in data:
@@ -294,7 +292,7 @@ class SkillIndex:
                 )
                 self._skills[meta.name] = meta
 
-            logger.info("index_yaml_loaded", count=len(self._skills))
+            logger.info("index_yaml_loaded count=%d", len(self._skills))
         except Exception as e:
             logger.exception("failed_to_load_index_yaml")
 
@@ -311,7 +309,7 @@ class SkillIndex:
                     if meta and meta.name not in self._skills:
                         self._skills[meta.name] = meta
                 except Exception as e:
-                    logger.warning("skill_extract_error", path=str(skill_md), error=str(e))
+                    logger.warning("skill_extract_error path=%s error=%s", skill_md, e)
 
         # Save index
         await self._save_index_yaml()
@@ -481,11 +479,11 @@ class SkillIndex:
         """
         meta = self._skills.get(skill_name)
         if not meta:
-            logger.warning("skill_not_found", name=skill_name)
+            logger.warning("skill_not_found name=%s", skill_name)
             return None
 
         if not meta.file_path or not Path(meta.file_path).exists():
-            logger.warning("skill_file_missing", name=skill_name, path=meta.file_path)
+            logger.warning("skill_file_missing name=%s path=%s", skill_name, meta.file_path)
             return None
 
         try:
@@ -496,9 +494,8 @@ class SkillIndex:
             is_safe, issues = self._validator.validate(content, meta.trust_level)
             if not is_safe:
                 logger.warning(
-                    "skill_validation_failed",
-                    name=skill_name,
-                    issues=issues,
+                    "skill_validation_failed name=%s issues=%s",
+                    skill_name, issues,
                 )
                 # Still return content but mark as untrusted
                 meta.trust_level = "untrusted"
@@ -508,7 +505,7 @@ class SkillIndex:
                 content=content,
             )
         except Exception as e:
-            logger.exception("failed_to_load_skill", name=skill_name)
+            logger.exception("failed_to_load_skill name=%s", skill_name)
             return None
 
     async def auto_detect(self, project_path: str) -> DetectionResult:

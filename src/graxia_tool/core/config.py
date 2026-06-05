@@ -44,6 +44,8 @@ class Settings:
 
     # Database
     database_url: str = field(default_factory=lambda: _env("AOS_DATABASE_URL", "sqlite+aiosqlite:///graxia.db"))
+    database_pool_size: int = field(default_factory=lambda: _env_int("AOS_DATABASE_POOL_SIZE", 5))
+    database_max_overflow: int = field(default_factory=lambda: _env_int("AOS_DATABASE_MAX_OVERFLOW", 10))
 
     # Redis
     redis_url: str = field(default_factory=lambda: _env("AOS_REDIS_URL", "redis://localhost:6379/0"))
