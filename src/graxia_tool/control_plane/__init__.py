@@ -8,6 +8,7 @@ Layers:
 - search: hybrid BM25 + recency ranking
 - security: input validation + audit trail + circuit breaker
 - cost: token budget + model routing + cache-first policy
+- watcher: real-time file change detection
 """
 from .memory import MemoryManager
 from .skills import SkillRegistry
@@ -15,6 +16,7 @@ from .cache import ToolCache
 from .search import HybridSearch
 from .security import SecurityGate
 from .cost import CostOptimizer
+from .watcher import FileWatcher
 
 __all__ = [
     "MemoryManager",
@@ -23,4 +25,5 @@ __all__ = [
     "HybridSearch",
     "SecurityGate",
     "CostOptimizer",
+    "FileWatcher",
 ]
