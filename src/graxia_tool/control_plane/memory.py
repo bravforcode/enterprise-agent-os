@@ -11,6 +11,7 @@ import hashlib
 import json
 import sqlite3
 import time
+import threading
 import uuid
 from enum import Enum
 from pathlib import Path
@@ -275,6 +276,48 @@ class MemoryManager:
 
     def close(self) -> None:
         self._conn.close()
+
+    def auto_persist(self, interval: int = 300) -> threading.Thread:
+        """Start background thread that snapshots working → longterm every `interval` seconds.
+
+        Returns the thread (daemon=True, auto-dies with parent).
+        """
+        import threading
+
+        def _persist_loop():
+            while True:
+                time.sleep(interval)
+                try:
+                    self._snapshot_working_to_longterm()
+                except Exception:
+                    pass
+
+        t = threading.Thread(target=_persist_loop, daemon=True, name="memory-auto-persist")
+        t.start()
+        return t
+
+    def _snapshot_working_to_longterm(self) -> int:
+        """Copy expired working entries to longterm tier."""
+        now = self._now()
+        rows = self._conn.execute(
+            "SELECT * FROM memories WHERE tier = 'working' AND expires_at IS NOT NULL AND expires_at < ?",
+            (now,),
+        ).fetchall()
+        count = 0
+        for row in rows:
+            self._conn.execute(
+                """INSERT OR REPLACE INTO memories
+                   (id, tier, project, key, content, content_hash, metadata,
+                    created_at, accessed_at, expires_at, access_count)
+                   VALUES (?, 'longterm', ?, ?, ?, ?, ?, ?, ?, NULL, ?)""",
+                (row["id"], row["project"], row["key"], row["content"],
+                 row["content_hash"], row["metadata"], row["created_at"],
+                 now, row["access_count"]),
+            )
+            count += 1
+        if count:
+            self._conn.commit()
+        return count
 
     def __enter__(self) -> "MemoryManager":
         return self
