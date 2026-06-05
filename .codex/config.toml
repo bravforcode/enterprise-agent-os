@@ -1,0 +1,10 @@
+
+[mcp_servers.graxia]
+command = "C:\Users\menum\AppData\Local\Programs\Python\Python312\python.exe"
+args = ["-m", "graxia_tool.mcp"]
+startup_timeout_sec = 180
+
+[mcp_servers.graxia.env]
+PYTHONPATH = "C:/Users/menum/enterprise-agent-os/src"
+PYTHONIOENCODING = "utf-8"
+AGENT_OS_VAULT_PATH = "C:\Users\menum\Documents\ObsidianVault\Second Brain"
