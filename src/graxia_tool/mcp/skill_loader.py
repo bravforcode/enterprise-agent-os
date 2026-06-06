@@ -30,6 +30,43 @@ logger = get_logger("skill_loader")
 SKILLS_INDEX_PATH = Path.home() / ".graxia" / "skills-index.json"
 SESSION_DB_PATH = Path.home() / ".graxia" / "session_memory.db"
 MAX_SKILL_SIZE_BYTES = 100_000  # 100KB limit per skill file
+
+# Default IDE skill directories (auto-detected on init)
+# Each entry: (path, must_exist). First match wins for each path string.
+def _default_ide_skill_dirs() -> list[str]:
+    """Return list of default IDE skill directories to scan.
+    Auto-detected per-IDE. Includes both home-dir and project-local paths.
+    """
+    home = Path.home()
+    candidates = [
+        # OpenCode (primary)
+        str(home / ".opencode" / "skills"),
+        str(home / ".config" / "opencode" / "skills"),
+        # Claude (Anthropic)
+        str(home / ".claude" / "skills"),
+        str(home / ".config" / "claude" / "skills"),
+        # Codex (OpenAI)
+        str(home / ".codex" / "skills"),
+        str(home / ".config" / "codex" / "skills"),
+        # Gemini
+        str(home / ".gemini" / "skills"),
+        # Cursor
+        str(home / ".cursor" / "skills"),
+        # Continue
+        str(home / ".continue" / "skills"),
+        # Aider
+        str(home / ".aider" / "skills"),
+        # JetBrains AI
+        str(home / ".jetbrains" / "skills"),
+    ]
+    return [p for p in candidates if Path(p).is_dir()]
+
+
+def _default_bundled_skill_dirs() -> list[str]:
+    """Bundled skills shipped with the package (under src/graxia_tool/skills/)."""
+    pkg_root = Path(__file__).resolve().parent.parent
+    bundled = pkg_root / "skills"
+    return [str(bundled)] if bundled.is_dir() else []
 INJECTION_PATTERNS = [
     r"ignore\s+(previous|all)\s+(instructions|prompts)",
     r"you\s+are\s+now\s+(a|an)\s+",
@@ -213,13 +250,22 @@ class SkillIndex:
         index_path: Optional[str] = None,
         db_path: Optional[str] = None,
         skill_dirs: Optional[list[str]] = None,
+        auto_detect: bool = True,
     ):
         self.index_path = Path(index_path) if index_path else SKILLS_INDEX_PATH
         self.db_path = Path(db_path) if db_path else SESSION_DB_PATH
-        self.skill_dirs = skill_dirs or []
+        # Auto-detect IDE + bundled dirs by default; merge with explicit skill_dirs
+        detected: list[str] = []
+        if auto_detect:
+            detected = _default_ide_skill_dirs() + _default_bundled_skill_dirs()
+        # Explicit skill_dirs take priority (and include any user-added paths)
+        merged = list(dict.fromkeys(list(skill_dirs or []) + detected))
+        self.skill_dirs = merged
+        self.auto_detect = auto_detect
         self._skills: dict[str, SkillMetadata] = {}
         self._db: Optional[sqlite3.Connection] = None
         self._initialized = False
+        self._last_refresh: float = 0.0
         self._validator = TrustValidator()
 
     async def initialize(self) -> None:
@@ -233,19 +279,51 @@ class SkillIndex:
         # Initialize SQLite
         self._init_db()
 
-        # Load or build index
-        if self.index_path.exists():
-            await self._load_index_yaml()
+        # Always start fresh from dirs (auto-detected)
+        # Old yaml index is overwritten to avoid stale entries.
+        self._skills.clear()
+        await self._build_index_from_dirs()
 
-        # Always rebuild from dirs if index is empty
-        if not self._skills:
-            await self._build_index_from_dirs()
-
-        # Cache to SQLite
+        # Cache to SQLite + JSON
         await self._sync_to_db()
+        await self._save_index_yaml()
 
         self._initialized = True
-        logger.info("skill_index_initialized count=%d path=%s", len(self._skills), self.index_path)
+        self._last_refresh = time.time()
+        logger.info(
+            "skill_index_initialized count=%d dirs=%d path=%s",
+            len(self._skills), len(self.skill_dirs), self.index_path,
+        )
+
+    async def refresh(self, force: bool = False) -> int:
+        """Re-scan skill directories and update the index.
+
+        Args:
+            force: Even if recently refreshed, re-scan anyway.
+
+        Returns:
+            Number of skills after refresh.
+        """
+        if not self._initialized:
+            await self.initialize()
+            return len(self._skills)
+
+        # Throttle: skip if refreshed < 5s ago (unless forced)
+        if not force and (time.time() - self._last_refresh) < 5.0:
+            return len(self._skills)
+
+        # Re-detect dirs in case IDEs were added/removed
+        if self.auto_detect:
+            detected = _default_ide_skill_dirs() + _default_bundled_skill_dirs()
+            self.skill_dirs = list(dict.fromkeys(detected))
+
+        # Rebuild
+        await self._build_index_from_dirs()
+        await self._sync_to_db()
+        await self._save_index_yaml()
+        self._last_refresh = time.time()
+        logger.info("skill_index_refreshed count=%d", len(self._skills))
+        return len(self._skills)
 
     def _init_db(self) -> None:
         """Create SQLite table for skill metadata cache."""
@@ -624,16 +702,6 @@ class SkillIndex:
             detected_files=detected_files,
             recommended_skills=recommended,
         )
-
-    async def refresh(self) -> int:
-        """Force refresh the index. Returns number of skills loaded."""
-        self._skills.clear()
-        if self.index_path.exists():
-            await self._load_index_yaml()
-        else:
-            await self._build_index_from_dirs()
-        await self._sync_to_db()
-        return len(self._skills)
 
     async def add_skill(self, meta: SkillMetadata) -> None:
         """Add or update a skill in the index."""

@@ -286,12 +286,22 @@ STATIC_RESPONSES: Dict[str, dict] = {}
 
 def _build_static_responses() -> None:
     """Pre-compute responses for tools that don't need I/O."""
+    # Get actual skill count from index
+    try:
+        import os
+        index_path = os.path.expanduser("~/.graxia/skills-index.json")
+        with open(index_path, encoding="utf-8") as f:
+            idx = json.load(f)
+        skill_count = len(idx) if isinstance(idx, list) else len(idx.get("skills", []))
+    except Exception:
+        skill_count = 0
+
     STATIC_RESPONSES["system_status"] = {
         "content": [{"type": "text", "text": json.dumps({
             "status": "ok",
             "version": "0.5.0",
-            "tools": 45,
-            "skills": 403,
+            "tools": 5,
+            "skills": skill_count,
             "uptime": "active",
         })}]
     }

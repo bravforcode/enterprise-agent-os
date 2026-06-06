@@ -143,16 +143,16 @@ async def _pipeline_run(args: Dict[str, Any]) -> Dict[str, Any]:
         return _err("query is required")
 
     pipeline = EndToEndPipeline()
-    request = PipelineRequest(query=query, user_id=user_id, pattern=pattern)
+    request = PipelineRequest(input=query, user_id=user_id, pattern=pattern)
     try:
-        result = await pipeline.run(request)
+        result = await pipeline.process(request)
         return _ok({
             "success": result.success,
             "output": result.output,
             "intent": getattr(result, "intent", None),
-            "stages": result.stages_log,
+            "stages": result.stages,
             "duration_ms": result.duration_ms,
-            "cost_usd": result.cost_usd,
+            "cost_usd": getattr(result, "cost_usd", 0.0),
         })
     except Exception as e:
         logger.exception("pipeline_run failed")
@@ -293,6 +293,29 @@ async def _cost_report(args: Dict[str, Any]) -> Dict[str, Any]:
         return _ok(report)
     except Exception as e:
         logger.exception("cost_report failed")
+        return _err(f"{type(e).__name__}: {e}")
+
+
+async def _graxia_optimize(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Optimize text using token reduction."""
+    text = args.get("text", "")
+    context = args.get("context", "command")
+    if not text:
+        return _err("text is required")
+    try:
+        # Simple optimization - count tokens saved
+        original_len = len(text)
+        # Remove extra whitespace and compress
+        optimized = " ".join(text.split())
+        saved = original_len - len(optimized)
+        return _ok({
+            "original_length": original_len,
+            "optimized_length": len(optimized),
+            "saved_bytes": saved,
+            "optimized": optimized if args.get("return_text", False) else None
+        })
+    except Exception as e:
+        logger.exception("graxia_optimize failed")
         return _err(f"{type(e).__name__}: {e}")
 
 
@@ -469,6 +492,72 @@ async def _vault_write(args: Dict[str, Any]) -> Dict[str, Any]:
         return _ok({"path": path, "written": True})
     except Exception as e:
         logger.exception("vault_write failed")
+        return _err(f"{type(e).__name__}: {e}")
+
+
+async def _vault_analytics(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Get analytics about the Obsidian vault."""
+    try:
+        from ..integrations.obsidian import ObsidianBridge
+        bridge = ObsidianBridge()
+        stats = await bridge.get_vault_stats()
+        return _ok({"analytics": stats})
+    except Exception as e:
+        logger.exception("vault_analytics failed")
+        return _err(f"{type(e).__name__}: {e}")
+
+
+async def _memory_ext_learn(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Learn from a memory entry and improve routing."""
+    try:
+        from ..session_memory import SessionMemory
+        memory = SessionMemory(db_path=_get_session_db_path())
+        content = args.get("content", "")
+        category = args.get("category", "general")
+        space = args.get("space")
+        if content:
+            entry_id = memory.learn(content=content, category=category, space=space)
+            return _ok({"learned": True, "category": category, "id": entry_id})
+        return _err("content is required")
+    except Exception as e:
+        logger.exception("memory_ext_learn failed")
+        return _err(f"{type(e).__name__}: {e}")
+
+
+async def _memory_ext_stats(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Get memory statistics."""
+    try:
+        from ..session_memory import SessionMemory
+        memory = SessionMemory(db_path=_get_session_db_path())
+        stats = memory.get_stats()
+        return _ok({"stats": stats})
+    except Exception as e:
+        logger.exception("memory_ext_stats failed")
+        return _err(f"{type(e).__name__}: {e}")
+
+
+async def _memory_dedup(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Find and remove duplicate memories.
+
+    Args:
+        threshold: Jaccard similarity 0..1 (default 0.7).
+        memory_type: 'task' | 'codebase' | 'preference' | None (all).
+        dry_run: bool (default true) — if false, actually removes.
+    """
+    try:
+        from ..session_memory import SessionMemory
+        memory = SessionMemory(db_path=_get_session_db_path())
+        threshold = float(args.get("threshold", 0.7))
+        memory_type = args.get("memory_type")
+        dry_run = bool(args.get("dry_run", True))
+        result = memory.deduplicate(
+            threshold=threshold,
+            memory_type=memory_type,
+            dry_run=dry_run,
+        )
+        return _ok(result)
+    except Exception as e:
+        logger.exception("memory_dedup failed")
         return _err(f"{type(e).__name__}: {e}")
 
 
@@ -848,11 +937,36 @@ class MCPServer:
 # CLI entry
 # ----------------------------------------------------------------------------
 
+def _cleanup_stale_processes() -> None:
+    """Kill stale graxia_tool.mcp processes (except current PID)."""
+    try:
+        import psutil
+        current_pid = os.getpid()
+        killed = 0
+        for p in psutil.process_iter(["pid", "cmdline"]):
+            try:
+                if p.pid == current_pid:
+                    continue
+                cmd = " ".join(p.info["cmdline"] or [])
+                if "graxia_tool.mcp" in cmd:
+                    p.kill()
+                    killed += 1
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                pass
+        if killed:
+            logger.info("cleanup_killed=%d stale processes", killed)
+    except ImportError:
+        pass
+
+
 def main() -> None:
     import argparse
 
     if sys.platform == "win32":
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
+    # Auto-cleanup stale daemon processes
+    _cleanup_stale_processes()
 
     # Check for preloaded caches
     try:

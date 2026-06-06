@@ -112,11 +112,15 @@ async def _brain_handler(args: Dict[str, Any]) -> Dict[str, Any]:
         from . import _memory_ext_stats
         return await _memory_ext_stats(args)
 
+    elif action == "deduplicate":
+        from . import _memory_dedup
+        return await _memory_dedup(args)
+
     elif action == "auto_route":
         from . import _auto_route
         return await _auto_route(args)
 
-    return {"content": [{"type": "text", "text": f"Unknown brain action: {action}. Use: recall|store|search|hybrid_search|skill_search|skill_load|skill_list|vault_search|vault_read|vault_write|vault_analytics|sync|sync_task|sync_all|learn|memory_stats|auto_route"}], "isError": True}
+    return {"content": [{"type": "text", "text": f"Unknown brain action: {action}. Use: recall|store|search|hybrid_search|skill_search|skill_load|skill_list|vault_search|vault_read|vault_write|vault_analytics|sync|sync_task|sync_all|learn|memory_stats|deduplicate|auto_route"}], "isError": True}
 
 
 async def _run_handler(args: Dict[str, Any]) -> Dict[str, Any]:
@@ -228,9 +232,9 @@ async def _sys_handler(args: Dict[str, Any]) -> Dict[str, Any]:
         return await _cache_set(args)
 
     elif action == "cache_stats":
-        from .context_cache import ContextCache
+        from ..context_cache import ContextCache
         cache = ContextCache()
-        stats = cache.stats()
+        stats = cache.get_stats()
         return {"content": [{"type": "text", "text": json.dumps(stats, indent=2)}]}
 
     return {"content": [{"type": "text", "text": f"Unknown sys action: {action}. Use: status|agents|cache_get|cache_set|cache_stats"}], "isError": True}
@@ -249,7 +253,7 @@ UNIFIED_TOOLS = [
                     "type": "string",
                     "enum": ["recall", "store", "search", "hybrid_search", "skill_search", "skill_load",
                              "skill_list", "vault_search", "vault_read", "vault_write", "vault_analytics",
-                             "sync", "sync_task", "sync_all", "learn", "memory_stats", "auto_route"],
+                             "sync", "sync_task", "sync_all", "learn", "memory_stats", "deduplicate", "auto_route"],
                     "description": "Operation to perform",
                 },
                 "query": {"type": "string", "description": "Search/recall query"},

@@ -316,6 +316,37 @@ class SessionMemory:
 
     # ── Preference memory ────────────────────────────────────────────────
 
+    def learn(self, content: str, category: str = "general", space: str | None = None) -> str:
+        """Learn/store a piece of knowledge for future recall.
+
+        Stores as codebase knowledge with the content in summary and
+        category/space in patterns for searchable indexing.
+
+        Args:
+            content: The content/finding to learn.
+            category: Category tag (e.g., 'general', 'architecture', 'bug').
+            space: Optional namespace for grouping (e.g., project name).
+
+        Returns:
+            The knowledge ID (entry path).
+        """
+        assert self._conn is not None
+        now = datetime.utcnow().isoformat()
+        path = f"learn/{category}/{now.replace(':', '-')}"
+        patterns = [category]
+        if space:
+            patterns.append(f"space:{space}")
+        knowledge = CodebaseKnowledge(
+            path=path,
+            file_type="learn",
+            summary=content[:2000],  # truncate large content
+            patterns=patterns,
+            architecture_notes=content[2000:] if len(content) > 2000 else "",
+            created_at=now,
+            updated_at=now,
+        )
+        return self.remember_codebase(knowledge)
+
     def remember_preference(self, key: str, value: str) -> None:
         """Store a user preference.
 
@@ -555,4 +586,151 @@ class SessionMemory:
             "tasks": self._conn.execute("SELECT COUNT(*) as c FROM tasks").fetchone()["c"],
             "codebase": self._conn.execute("SELECT COUNT(*) as c FROM codebase").fetchone()["c"],
             "preferences": self._conn.execute("SELECT COUNT(*) as c FROM preferences").fetchone()["c"],
+        }
+
+    # ── Deduplication ────────────────────────────────────────────────────
+
+    @staticmethod
+    def _jaccard(a: set, b: set) -> float:
+        """Jaccard similarity: |A ∩ B| / |A ∪ B|. 0..1."""
+        if not a and not b:
+            return 1.0
+        if not a or not b:
+            return 0.0
+        return len(a & b) / len(a | b)
+
+    def _shingles(self, text: str, n: int = 3) -> set:
+        """Char n-gram shingles (case-insensitive, normalized)."""
+        text = (text or "").lower().strip()
+        if len(text) < n:
+            return {text} if text else set()
+        return {text[i:i + n] for i in range(len(text) - n + 1)}
+
+    def find_duplicates(
+        self,
+        threshold: float = 0.7,
+        memory_type: str | None = None,
+        max_items: int = 2000,
+    ) -> list[list[dict[str, Any]]]:
+        """Find near-duplicate memory entries using char n-gram Jaccard.
+
+        Args:
+            threshold: Jaccard similarity threshold (0..1). Higher = stricter.
+            memory_type: Filter by type: 'task', 'codebase', 'preference', or None=all.
+            max_items: Cap on items scanned (to keep it fast).
+
+        Returns:
+            List of duplicate groups, each group = list of {id, type, content, created_at}.
+        """
+        assert self._conn is not None
+        items: list[dict[str, Any]] = []
+
+        if memory_type in (None, "task"):
+            for row in self._conn.execute(
+                "SELECT id, prompt as content, 'task' as type, created_at FROM tasks ORDER BY created_at ASC LIMIT ?",
+                (max_items,),
+            ):
+                items.append(dict(row))
+        if memory_type in (None, "codebase"):
+            for row in self._conn.execute(
+                "SELECT path as id, summary as content, 'codebase' as type, created_at FROM codebase ORDER BY created_at ASC LIMIT ?",
+                (max_items,),
+            ):
+                items.append(dict(row))
+        if memory_type in (None, "preference"):
+            for row in self._conn.execute(
+                "SELECT key as id, value as content, 'preference' as type, created_at FROM preferences ORDER BY created_at ASC LIMIT ?",
+                (max_items,),
+            ):
+                items.append(dict(row))
+
+        # Pre-compute shingles
+        shingle_map = {id(it): self._shingles(it["content"]) for it in items}
+
+        # Union-Find for grouping
+        parent = {id(it): id(it) for it in items}
+
+        def find(x):
+            while parent[x] != x:
+                parent[x] = parent[parent[x]]
+                x = parent[x]
+            return x
+
+        def union(x, y):
+            rx, ry = find(x), find(y)
+            if rx != ry:
+                parent[rx] = ry
+
+        # O(n^2) but capped at max_items — for n=2000 still fast (<1s on laptop)
+        for i, a in enumerate(items):
+            sa = shingle_map[id(a)]
+            for b in items[i + 1:]:
+                sb = shingle_map[id(b)]
+                sim = self._jaccard(sa, sb)
+                if sim >= threshold:
+                    union(id(a), id(b))
+
+        # Group by root
+        groups: dict[int, list[dict[str, Any]]] = {}
+        for it in items:
+            r = find(id(it))
+            groups.setdefault(r, []).append(it)
+
+        # Only return groups with > 1 entries; sort by created_at
+        result: list[list[dict[str, Any]]] = []
+        for grp in groups.values():
+            if len(grp) > 1:
+                grp.sort(key=lambda x: x.get("created_at", ""))
+                result.append(grp)
+        return result
+
+    def deduplicate(
+        self,
+        threshold: float = 0.7,
+        memory_type: str | None = None,
+        dry_run: bool = True,
+    ) -> dict[str, Any]:
+        """Find and remove duplicate memories, keeping the oldest of each group.
+
+        Args:
+            threshold: Jaccard similarity threshold.
+            memory_type: Filter by type: 'task', 'codebase', 'preference', or None=all.
+            dry_run: If True, don't actually delete, just report.
+
+        Returns:
+            Dict with: groups_found, items_removed, ids_removed (list).
+        """
+        groups = self.find_duplicates(threshold=threshold, memory_type=memory_type)
+        items_removed: list[dict[str, str]] = []
+        for grp in groups:
+            # Keep the oldest (index 0 after sort by created_at)
+            for it in grp[1:]:
+                items_removed.append({
+                    "id": str(it["id"]),
+                    "type": it["type"],
+                    "content_preview": (it.get("content") or "")[:80],
+                })
+
+        if not dry_run and items_removed:
+            for it in items_removed:
+                table = it["type"] + "s"  # tasks, codebases (not codebase!), preferences
+                if it["type"] == "task":
+                    table = "tasks"
+                elif it["type"] == "codebase":
+                    table = "codebase"
+                elif it["type"] == "preference":
+                    table = "preferences"
+                col = "id" if it["type"] == "task" else (
+                    "path" if it["type"] == "codebase" else "key"
+                )
+                self._conn.execute(
+                    f"DELETE FROM {table} WHERE {col} = ?", (it["id"],)
+                )
+            self._conn.commit()
+
+        return {
+            "groups_found": len(groups),
+            "items_removed": len(items_removed),
+            "dry_run": dry_run,
+            "ids_removed": items_removed,
         }

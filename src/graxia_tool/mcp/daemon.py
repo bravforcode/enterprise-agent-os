@@ -260,12 +260,37 @@ class DaemonMCPServer(MCPServer):
             return make_error(req_id, -32603, f"memory_recall error: {e}")
 
 
+def _cleanup_stale_processes() -> None:
+    """Kill stale graxia_tool.mcp processes (except current PID)."""
+    try:
+        import psutil
+        current_pid = os.getpid()
+        killed = 0
+        for p in psutil.process_iter(["pid", "cmdline"]):
+            try:
+                if p.pid == current_pid:
+                    continue
+                cmd = " ".join(p.info["cmdline"] or [])
+                if "graxia_tool.mcp" in cmd:
+                    p.kill()
+                    killed += 1
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                pass
+        if killed:
+            logger.info("cleanup_killed=%d stale processes", killed)
+    except ImportError:
+        pass
+
+
 def main():
     """Run persistent daemon."""
     import argparse
 
     if sys.platform == "win32":
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
+    # Auto-cleanup stale daemon processes
+    _cleanup_stale_processes()
 
     parser = argparse.ArgumentParser(description="Graxia MCP Daemon (persistent)")
     parser.add_argument("--log-level", default="INFO")

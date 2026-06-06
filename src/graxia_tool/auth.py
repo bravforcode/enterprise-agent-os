@@ -23,7 +23,15 @@ from .security import AuditLogger, hash_password, verify_password
 
 
 # Default JWT settings
-JWT_SECRET = os.getenv("GRAXIA_JWT_SECRET", "change-me-in-production-please")
+JWT_SECRET = os.getenv("GRAXIA_JWT_SECRET")
+if not JWT_SECRET:
+    import warnings
+    warnings.warn(
+        "GRAXIA_JWT_SECRET not set. Using insecure default. "
+        "Set GRAXIA_JWT_SECRET environment variable in production!",
+        stacklevel=2,
+    )
+    JWT_SECRET = "change-me-in-production-please"
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRATION_HOURS = 24
 
